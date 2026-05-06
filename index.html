@@ -1,1 +1,44 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Registro Biométrico ESP32</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <h1>Sistema Biométrico ESP32 + AS608</h1>
+    <p>Tabla de accesos registrados en Firebase</p>
+  </header>
+
+  <main>
+    <table id="accesosTable">
+      <thead>
+        <tr>
+          <th>Fecha Local</th>
+          <th>Hora ISO</th>
+          <th>Estado</th>
+          <th>ID Usuario</th>
+          <th>Nombre</th>
+          <th>CI</th>
+          <th>Correo</th>
+          <th>Teléfono</th>
+          <th>Confianza</th>
+          <th>Dispositivo</th>
+          <th>IP</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- Filas dinámicas -->
+      </tbody>
+    </table>
+  </main>
+
+  <footer>
+    <p>Proyecto de Fernando | ESP32 + Firebase</p>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
 
