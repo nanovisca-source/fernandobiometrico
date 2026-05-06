@@ -21,7 +21,7 @@
     .toolbar button { font-size: 13px; padding: 6px 14px; border-radius: 8px; border: 1px solid #ccc; background: #fff; cursor: pointer; }
     .toolbar button.active { background: #1a1a1a; color: #fff; border-color: #1a1a1a; }
     .live { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #888; }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: #ccc; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #ccc; display: inline-block; }
     .dot.on  { background: #1D9E75; }
     .dot.err { background: #E24B4A; }
 
@@ -36,7 +36,6 @@
     .badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
     .badge.ok   { background: #E1F5EE; color: #0F6E56; }
     .badge.deny { background: #FCEBEB; color: #A32D2D; }
-
     .hint { font-size: 11px; color: #aaa; text-align: right; margin-top: 6px; }
 
     @media (max-width: 500px) {
@@ -48,7 +47,7 @@
 <body>
 
   <h1>🔐 Sistema Biométrico — Accesos</h1>
-  <p class="sub">ESP32 + AS608 · Firebase Realtime Database · actualización cada 5 s</p>
+  <p class="sub">ESP32 + AS608 · Firebase Realtime Database · tiempo real</p>
 
   <div class="cards">
     <div class="card">
@@ -70,9 +69,9 @@
   </div>
 
   <div class="toolbar">
-    <button class="active" onclick="setFilter('all',  this)">Todos</button>
-    <button               onclick="setFilter('ok',   this)">Permitidos</button>
-    <button               onclick="setFilter('deny', this)">Denegados</button>
+    <button class="active" onclick="setFilter('all', this)">Todos</button>
+    <button onclick="setFilter('ok', this)">Permitidos</button>
+    <button onclick="setFilter('deny', this)">Denegados</button>
     <div class="live">
       <span class="dot" id="dot"></span>
       <span id="live-txt">conectando...</span>
@@ -91,108 +90,15 @@
         </tr>
       </thead>
       <tbody id="body">
-        <tr><td colspan="5" style="text-align:center;padding:2rem;color:#aaa;">Cargando...</td></tr>
+        <tr><td colspan="5" style="text-align:center;padding:2rem;color:#aaa;">Conectando con Firebase...</td></tr>
       </tbody>
     </table>
   </div>
-  <p class="hint">Últimos 50 registros</p>
+  <p class="hint">Últimos 50 registros · actualización en tiempo real</p>
+
+  <!-- Firebase SDK v8 CDN (funciona sin bundler, perfecto para GitHub Pages) -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 
   <script>
-    // ──────────────────────────────────────────────
-    //  CONFIGURACIÓN — edita solo esta sección
-    // ──────────────────────────────────────────────
-    const FIREBASE_URL =
-      "https://biometrico-viscarra-default-rtdb.firebaseio.com/accesos.json" +
-      "?orderBy=%22timestamp_unix%22&limitToLast=50";
-
-    // Si usas Database Secret, ponlo aquí; si las reglas son públicas, deja "".
-    const DB_SECRET = "";
-    // ──────────────────────────────────────────────
-
-    let allData      = [];
-    let activeFilter = 'all';
-
-    function buildURL() {
-      let url = FIREBASE_URL;
-      if (DB_SECRET) url += "&auth=" + DB_SECRET;
-      return url;
-    }
-
-    function setFilter(f, el) {
-      activeFilter = f;
-      document.querySelectorAll('.toolbar button').forEach(b => b.classList.remove('active'));
-      el.classList.add('active');
-      renderTable();
-    }
-
-    function renderTable() {
-      const body = document.getElementById('body');
-      const rows = allData
-        .filter(r => {
-          if (activeFilter === 'ok')   return r.permitido === true;
-          if (activeFilter === 'deny') return r.permitido === false;
-          return true;
-        })
-        .reverse();
-
-      if (!rows.length) {
-        body.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:2rem;color:#aaa;">Sin registros</td></tr>';
-        return;
-      }
-
-      body.innerHTML = rows.map(r => {
-        const ok   = r.permitido === true;
-        const conf = r.confianza || 0;
-        const confColor = conf >= 80 ? '#0F6E56' : conf >= 50 ? '#BA7517' : '#A32D2D';
-        return `
-          <tr>
-            <td style="color:#888">${r.timestamp_local || '—'}</td>
-            <td><span class="badge ${ok ? 'ok' : 'deny'}">${ok ? 'PERMITIDO' : 'DENEGADO'}</span></td>
-            <td>${r.nombre || '—'}</td>
-            <td style="color:#888">${r.ci || '—'}</td>
-            <td style="font-weight:600;color:${confColor}">${conf > 0 ? conf + '%' : '—'}</td>
-          </tr>`;
-      }).join('');
-    }
-
-    function updateStats() {
-      const total = allData.length;
-      const ok    = allData.filter(r => r.permitido === true).length;
-      const no    = allData.filter(r => r.permitido === false).length;
-      const confArr = allData.filter(r => r.confianza > 0).map(r => r.confianza);
-      const avg  = confArr.length ? Math.round(confArr.reduce((a,b) => a+b,0) / confArr.length) : 0;
-      document.getElementById('cnt-total').textContent = total;
-      document.getElementById('cnt-ok').textContent    = ok;
-      document.getElementById('cnt-no').textContent    = no;
-      document.getElementById('cnt-conf').textContent  = avg ? avg + '%' : '—';
-    }
-
-    async function fetchData() {
-      try {
-        const res  = await fetch(buildURL());
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        const json = await res.json();
-        allData = json && typeof json === 'object' ? Object.values(json) : [];
-        updateStats();
-        renderTable();
-        const dot = document.getElementById('dot');
-        dot.className = 'dot on';
-        document.getElementById('live-txt').textContent = 'en vivo';
-      } catch (e) {
-        const dot = document.getElementById('dot');
-        dot.className = 'dot err';
-        document.getElementById('live-txt').textContent = 'error';
-        if (!allData.length) {
-          document.getElementById('body').innerHTML =
-            '<tr><td colspan="5" style="text-align:center;padding:2rem;color:#c00;">' +
-            'No se pudo conectar con Firebase. Revisa las reglas de acceso.' +
-            '</td></tr>';
-        }
-      }
-    }
-
-    fetchData();
-    setInterval(fetchData, 5000);
-  </script>
-</body>
-</html>
+    // ── Tu configuració
