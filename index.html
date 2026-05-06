@@ -3,196 +3,587 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sistema Biométrico - Accesos</title>
+  <title>BioAccess — Panel de Control</title>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:        #05070f;
+      --surface:   #0c0f1e;
+      --surface2:  #111629;
+      --border:    rgba(99,120,255,0.13);
+      --border2:   rgba(99,120,255,0.25);
+      --accent:    #6378ff;
+      --accent2:   #38bdf8;
+      --ok:        #10d68e;
+      --ok-bg:     rgba(16,214,142,0.08);
+      --deny:      #ff4d6d;
+      --deny-bg:   rgba(255,77,109,0.08);
+      --warn:      #f59e0b;
+      --text:      #e8eaf6;
+      --muted:     #6b7280;
+      --muted2:    #4b5268;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: system-ui, sans-serif;
-      background: #f0f2f5;
-      color: #1a1a1a;
+      font-family: 'DM Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text);
       min-height: 100vh;
+      overflow-x: hidden;
     }
 
+    /* ── Fondo animado ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 60% 40% at 20% 10%, rgba(99,120,255,0.07) 0%, transparent 60%),
+        radial-gradient(ellipse 40% 50% at 80% 80%, rgba(56,189,248,0.05) 0%, transparent 60%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Grid de puntos ── */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: radial-gradient(rgba(99,120,255,0.15) 1px, transparent 1px);
+      background-size: 32px 32px;
+      pointer-events: none;
+      z-index: 0;
+      mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black, transparent);
+    }
+
+    /* ── Header ── */
     header {
-      background: #1a1a2e;
-      color: #fff;
-      padding: 1.2rem 2rem;
+      position: relative;
+      z-index: 10;
       display: flex;
       align-items: center;
-      gap: 12px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      justify-content: space-between;
+      padding: 1.2rem 2.5rem;
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+      background: rgba(5,7,15,0.7);
     }
-    header .icon { font-size: 1.8rem; }
-    header h1   { font-size: 1.2rem; font-weight: 600; }
-    header p    { font-size: 0.75rem; color: #aaa; margin-top: 2px; }
 
-    .container { max-width: 1100px; margin: 0 auto; padding: 1.5rem 1rem; }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
 
-    /* ── Tarjetas de estadísticas ── */
-    .cards {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 12px;
+    .logo-icon {
+      width: 42px;
+      height: 42px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      box-shadow: 0 0 20px rgba(99,120,255,0.35);
+    }
+
+    .logo-text h1 {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: #fff;
+    }
+
+    .logo-text p {
+      font-size: 11px;
+      color: var(--muted);
+      font-family: 'DM Mono', monospace;
+      letter-spacing: 0.05em;
+      margin-top: 1px;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .live-pill {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      background: rgba(16,214,142,0.08);
+      border: 1px solid rgba(16,214,142,0.2);
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-family: 'DM Mono', monospace;
+      color: var(--ok);
+      letter-spacing: 0.05em;
+    }
+
+    .live-pill.error {
+      background: var(--deny-bg);
+      border-color: rgba(255,77,109,0.3);
+      color: var(--deny);
+    }
+
+    .pulse {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--ok);
+      position: relative;
+    }
+
+    .pulse::after {
+      content: '';
+      position: absolute;
+      inset: -3px;
+      border-radius: 50%;
+      background: var(--ok);
+      opacity: 0.4;
+      animation: ping 1.5s ease-out infinite;
+    }
+
+    @keyframes ping {
+      0%   { transform: scale(1); opacity: 0.4; }
+      100% { transform: scale(2.5); opacity: 0; }
+    }
+
+    .live-pill.error .pulse { background: var(--deny); }
+    .live-pill.error .pulse::after { background: var(--deny); }
+
+    .header-time {
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    /* ── Contenedor principal ── */
+    .container {
+      position: relative;
+      z-index: 1;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem 2rem 3rem;
+    }
+
+    /* ── Sección título ── */
+    .section-title {
       margin-bottom: 1.5rem;
     }
-    .card {
-      background: #fff;
-      border-radius: 12px;
-      padding: 1.2rem 1rem;
-      text-align: center;
-      border: 1px solid #e0e0e0;
+
+    .section-title h2 {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.02em;
     }
-    .card .label { font-size: 12px; color: #888; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
-    .card .value { font-size: 2rem; font-weight: 700; color: #1a1a2e; }
-    .card.ok   .value { color: #0F6E56; }
-    .card.deny .value { color: #c0392b; }
-    .card.conf .value { color: #2471a3; }
+
+    .section-title p {
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    /* ── Tarjetas métricas ── */
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 14px;
+      margin-bottom: 1.8rem;
+    }
+
+    .metric {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.4rem 1.5rem;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+
+    .metric:hover {
+      border-color: var(--border2);
+      transform: translateY(-2px);
+    }
+
+    .metric::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: var(--stripe, var(--accent));
+      opacity: 0.6;
+    }
+
+    .metric.ok   { --stripe: var(--ok); }
+    .metric.deny { --stripe: var(--deny); }
+    .metric.conf { --stripe: var(--accent2); }
+
+    .metric-icon {
+      font-size: 22px;
+      margin-bottom: 12px;
+      opacity: 0.8;
+    }
+
+    .metric-label {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-family: 'DM Mono', monospace;
+      margin-bottom: 6px;
+    }
+
+    .metric-value {
+      font-family: 'Syne', sans-serif;
+      font-size: 2.4rem;
+      font-weight: 800;
+      color: #fff;
+      line-height: 1;
+    }
+
+    .metric.ok   .metric-value { color: var(--ok); }
+    .metric.deny .metric-value { color: var(--deny); }
+    .metric.conf .metric-value { color: var(--accent2); }
+
+    .metric-sub {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
 
     /* ── Barra de herramientas ── */
     .toolbar {
       display: flex;
+      align-items: center;
       gap: 8px;
       flex-wrap: wrap;
-      align-items: center;
       margin-bottom: 1rem;
-      background: #fff;
-      padding: 0.8rem 1rem;
-      border-radius: 10px;
-      border: 1px solid #e0e0e0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.7rem 1rem;
     }
-    .toolbar span { font-size: 13px; color: #555; font-weight: 500; margin-right: 4px; }
-    .toolbar button {
-      font-size: 13px;
-      padding: 6px 16px;
-      border-radius: 20px;
-      border: 1px solid #ccc;
-      background: #fff;
+
+    .toolbar-label {
+      font-size: 11px;
+      color: var(--muted);
+      font-family: 'DM Mono', monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-right: 4px;
+    }
+
+    .filter-btn {
+      font-size: 12px;
+      font-weight: 500;
+      padding: 5px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border2);
+      background: transparent;
+      color: var(--muted);
       cursor: pointer;
       transition: all 0.15s;
-      font-weight: 500;
+      font-family: 'DM Sans', sans-serif;
+      letter-spacing: 0.02em;
     }
-    .toolbar button:hover  { border-color: #1a1a2e; color: #1a1a2e; }
-    .toolbar button.active { background: #1a1a2e; color: #fff; border-color: #1a1a2e; }
 
-    .live-wrap { margin-left: auto; display: flex; align-items: center; gap: 6px; }
-    .dot { width: 9px; height: 9px; border-radius: 50%; background: #ccc; display: inline-block; transition: background 0.3s; }
-    .dot.on  { background: #27ae60; box-shadow: 0 0 6px #27ae6088; }
-    .dot.err { background: #e74c3c; }
-    #live-txt { font-size: 12px; color: #888; }
+    .filter-btn:hover { color: var(--text); border-color: var(--accent); }
+
+    .filter-btn.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      box-shadow: 0 0 12px rgba(99,120,255,0.35);
+    }
+
+    .filter-btn.ok-btn.active  { background: var(--ok);   border-color: var(--ok);   box-shadow: 0 0 12px rgba(16,214,142,0.35); }
+    .filter-btn.deny-btn.active{ background: var(--deny); border-color: var(--deny); box-shadow: 0 0 12px rgba(255,77,109,0.35); }
+
+    .search-box {
+      margin-left: auto;
+      position: relative;
+    }
+
+    .search-box input {
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      border-radius: 8px;
+      padding: 6px 12px 6px 34px;
+      font-size: 13px;
+      color: var(--text);
+      width: 210px;
+      outline: none;
+      font-family: 'DM Sans', sans-serif;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .search-box input::placeholder { color: var(--muted2); }
+    .search-box input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(99,120,255,0.12);
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-size: 14px;
+      pointer-events: none;
+    }
 
     /* ── Tabla ── */
     .table-wrap {
-      background: #fff;
-      border-radius: 12px;
-      border: 1px solid #e0e0e0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
       overflow: hidden;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
     }
-    table { width: 100%; border-collapse: collapse; font-size: 13.5px; table-layout: fixed; }
-    thead tr { background: #1a1a2e; color: #fff; }
-    th { padding: 12px 14px; text-align: left; font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-    td { padding: 11px 14px; border-bottom: 1px solid #f0f0f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    tr:last-child td { border-bottom: none; }
-    tbody tr:hover { background: #f8f9ff; }
 
-    /* Anchos de columnas */
-    th:nth-child(1), td:nth-child(1) { width: 155px; }
-    th:nth-child(2), td:nth-child(2) { width: 105px; }
-    th:nth-child(3), td:nth-child(3) { }
-    th:nth-child(4), td:nth-child(4) { width: 90px; }
-    th:nth-child(5), td:nth-child(5) { width: 80px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    thead tr {
+      border-bottom: 1px solid var(--border);
+      background: var(--surface2);
+    }
+
+    th {
+      padding: 13px 16px;
+      text-align: left;
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-family: 'DM Mono', monospace;
+    }
+
+    th:nth-child(1) { width: 160px; }
+    th:nth-child(2) { width: 115px; }
+    th:nth-child(4) { width: 95px; }
+    th:nth-child(5) { width: 110px; }
+
+    td {
+      padding: 13px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13.5px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      vertical-align: middle;
+    }
+
+    tbody tr:last-child td { border-bottom: none; }
+
+    tbody tr {
+      transition: background 0.12s;
+    }
+
+    tbody tr:hover { background: rgba(99,120,255,0.04); }
+
+    .ts {
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      color: var(--muted);
+    }
 
     .badge {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
       padding: 3px 10px;
-      border-radius: 20px;
-      font-size: 11px;
+      border-radius: 6px;
+      font-size: 10px;
       font-weight: 700;
-      letter-spacing: 0.3px;
+      font-family: 'DM Mono', monospace;
+      letter-spacing: 0.06em;
     }
-    .badge.ok   { background: #e8f8f2; color: #0F6E56; border: 1px solid #a9dfcc; }
-    .badge.deny { background: #fdf0ef; color: #c0392b; border: 1px solid #f5b7b1; }
 
-    .conf-bar-wrap { display: flex; align-items: center; gap: 6px; }
-    .conf-bar { flex: 1; height: 6px; background: #eee; border-radius: 3px; overflow: hidden; }
-    .conf-bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+    .badge.ok {
+      background: var(--ok-bg);
+      color: var(--ok);
+      border: 1px solid rgba(16,214,142,0.2);
+    }
 
-    .empty-row td { text-align: center; padding: 3rem; color: #aaa; font-size: 14px; }
+    .badge.deny {
+      background: var(--deny-bg);
+      color: var(--deny);
+      border: 1px solid rgba(255,77,109,0.2);
+    }
 
-    .hint {
-      font-size: 11px;
-      color: #aaa;
+    .badge-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .name-cell {
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .ci-cell {
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .conf-cell {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .conf-track {
+      flex: 1;
+      height: 4px;
+      background: var(--surface2);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .conf-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.4s ease;
+    }
+
+    .conf-num {
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      font-weight: 500;
+      min-width: 34px;
       text-align: right;
-      margin-top: 8px;
     }
 
-    /* ── Búsqueda ── */
-    .search-wrap { flex: 1; max-width: 220px; margin-left: 8px; }
-    .search-wrap input {
-      width: 100%;
-      padding: 6px 12px;
-      border-radius: 20px;
-      border: 1px solid #ccc;
-      font-size: 13px;
-      outline: none;
-      transition: border 0.15s;
+    .empty-msg {
+      text-align: center;
+      padding: 4rem 2rem;
+      color: var(--muted);
+      font-size: 14px;
     }
-    .search-wrap input:focus { border-color: #1a1a2e; }
+
+    .empty-msg .empty-icon {
+      font-size: 2.5rem;
+      margin-bottom: 12px;
+      opacity: 0.4;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 10px;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .footer span {
+      font-size: 11px;
+      color: var(--muted2);
+      font-family: 'DM Mono', monospace;
+    }
+
+    /* ── Animación de entrada ── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .metrics   { animation: fadeUp 0.4s ease both; }
+    .toolbar   { animation: fadeUp 0.4s ease 0.1s both; }
+    .table-wrap{ animation: fadeUp 0.4s ease 0.15s both; }
 
     /* ── Responsive ── */
-    @media (max-width: 560px) {
+    @media (max-width: 640px) {
+      header { padding: 1rem 1.2rem; }
+      .container { padding: 1.2rem 1rem; }
+      .header-time { display: none; }
       th:nth-child(4), td:nth-child(4),
       th:nth-child(5), td:nth-child(5) { display: none; }
-      header h1 { font-size: 1rem; }
-      .search-wrap { max-width: 140px; }
+      .search-box input { width: 140px; }
     }
   </style>
 </head>
 <body>
 
   <header>
-    <div class="icon">🔐</div>
-    <div>
-      <h1>Sistema Biométrico — Panel de Accesos</h1>
-      <p>ESP32 + AS608 · Firebase Realtime Database · actualización en tiempo real</p>
+    <div class="logo">
+      <div class="logo-icon">🔐</div>
+      <div class="logo-text">
+        <h1>BioAccess</h1>
+        <p>ESP32 · AS608 · FIREBASE RTDB</p>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="live-pill" id="live-pill">
+        <div class="pulse" id="pulse-dot"></div>
+        <span id="live-txt">CONECTANDO</span>
+      </div>
+      <div class="header-time" id="clock">--:--:--</div>
     </div>
   </header>
 
   <div class="container">
 
-    <!-- Tarjetas -->
-    <div class="cards">
-      <div class="card">
-        <div class="label">Total registros</div>
-        <div class="value" id="cnt-total">—</div>
+    <div class="section-title">
+      <h2>Panel de Accesos</h2>
+      <p>Monitoreo en tiempo real · últimos 100 registros</p>
+    </div>
+
+    <!-- Métricas -->
+    <div class="metrics">
+      <div class="metric">
+        <div class="metric-icon">📊</div>
+        <div class="metric-label">Total registros</div>
+        <div class="metric-value" id="cnt-total">—</div>
+        <div class="metric-sub">Histórico cargado</div>
       </div>
-      <div class="card ok">
-        <div class="label">Permitidos</div>
-        <div class="value" id="cnt-ok">—</div>
+      <div class="metric ok">
+        <div class="metric-icon">✅</div>
+        <div class="metric-label">Accesos permitidos</div>
+        <div class="metric-value" id="cnt-ok">—</div>
+        <div class="metric-sub" id="pct-ok">—% del total</div>
       </div>
-      <div class="card deny">
-        <div class="label">Denegados</div>
-        <div class="value" id="cnt-no">—</div>
+      <div class="metric deny">
+        <div class="metric-icon">🚫</div>
+        <div class="metric-label">Accesos denegados</div>
+        <div class="metric-value" id="cnt-no">—</div>
+        <div class="metric-sub" id="pct-no">—% del total</div>
       </div>
-      <div class="card conf">
-        <div class="label">Confianza prom.</div>
-        <div class="value" id="cnt-conf">—</div>
+      <div class="metric conf">
+        <div class="metric-icon">🎯</div>
+        <div class="metric-label">Confianza promedio</div>
+        <div class="metric-value" id="cnt-conf">—</div>
+        <div class="metric-sub">Nivel biométrico</div>
       </div>
     </div>
 
-    <!-- Barra de herramientas -->
+    <!-- Toolbar -->
     <div class="toolbar">
-      <span>Filtrar:</span>
-      <button class="active" onclick="setFilter('all', this)">Todos</button>
-      <button onclick="setFilter('ok',   this)">✅ Permitidos</button>
-      <button onclick="setFilter('deny', this)">❌ Denegados</button>
-      <div class="search-wrap">
-        <input type="text" id="search" placeholder="🔍 Buscar nombre o CI..." oninput="renderTable()" />
-      </div>
-      <div class="live-wrap">
-        <span class="dot" id="dot"></span>
-        <span id="live-txt">conectando...</span>
+      <span class="toolbar-label">Filtro</span>
+      <button class="filter-btn active"    onclick="setFilter('all',  this)">Todos</button>
+      <button class="filter-btn ok-btn"    onclick="setFilter('ok',   this)">Permitidos</button>
+      <button class="filter-btn deny-btn"  onclick="setFilter('deny', this)">Denegados</button>
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="search" placeholder="Buscar nombre o CI..." oninput="renderTable()" />
       </div>
     </div>
 
@@ -209,22 +600,40 @@
           </tr>
         </thead>
         <tbody id="tbody">
-          <tr class="empty-row"><td colspan="5">Conectando con Firebase...</td></tr>
+          <tr>
+            <td colspan="5">
+              <div class="empty-msg">
+                <div class="empty-icon">⏳</div>
+                Conectando con Firebase...
+              </div>
+            </td>
+          </tr>
         </tbody>
       </table>
     </div>
-    <p class="hint">Últimos 100 registros · se actualiza solo cuando el ESP32 envía datos</p>
+
+    <div class="footer">
+      <span id="last-update">Sin datos aún</span>
+      <span>BIOACCESS v2.1 · ESP32+AS608</span>
+    </div>
 
   </div>
 
-  <!-- Firebase SDK v8 (compatible con GitHub Pages sin bundler) -->
+  <!-- Firebase SDK v8 -->
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 
   <script>
-    // ╔══════════════════════════════════════════╗
-    // ║     CONFIGURACIÓN DE FIREBASE            ║
-    // ╚══════════════════════════════════════════╝
+    // ── Reloj ──
+    function updateClock() {
+      const now = new Date();
+      document.getElementById('clock').textContent =
+        now.toLocaleTimeString('es-BO', { hour12: false });
+    }
+    updateClock();
+    setInterval(updateClock, 1000);
+
+    // ── Firebase config ──
     const firebaseConfig = {
       apiKey:            "AIzaSyBByw6YOt3qTgaoh6L0OdjOmsCnGLRdvCg",
       authDomain:        "biometrico-viscarra.firebaseapp.com",
@@ -235,44 +644,29 @@
       appId:             "1:898210883765:web:2eba43bbf6ed75511676fc"
     };
 
-    // ╔══════════════════════════════════════════╗
-    // ║     INICIALIZAR FIREBASE                 ║
-    // ╚══════════════════════════════════════════╝
     firebase.initializeApp(firebaseConfig);
     const db  = firebase.database();
     const ref = db.ref("accesos");
 
-    // ╔══════════════════════════════════════════╗
-    // ║     ESTADO GLOBAL                        ║
-    // ╚══════════════════════════════════════════╝
     let allData      = [];
     let activeFilter = 'all';
 
-    // ╔══════════════════════════════════════════╗
-    // ║     FILTRO DE BOTONES                    ║
-    // ╚══════════════════════════════════════════╝
     function setFilter(f, el) {
       activeFilter = f;
-      document.querySelectorAll('.toolbar button').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
       el.classList.add('active');
       renderTable();
     }
 
-    // ╔══════════════════════════════════════════╗
-    // ║     COLOR DE BARRA DE CONFIANZA          ║
-    // ╚══════════════════════════════════════════╝
     function confColor(v) {
-      if (v >= 80) return '#27ae60';
-      if (v >= 50) return '#f39c12';
-      return '#e74c3c';
+      if (v >= 80) return '#10d68e';
+      if (v >= 50) return '#f59e0b';
+      return '#ff4d6d';
     }
 
-    // ╔══════════════════════════════════════════╗
-    // ║     RENDERIZAR TABLA                     ║
-    // ╚══════════════════════════════════════════╝
     function renderTable() {
       const tbody  = document.getElementById('tbody');
-      const search = document.getElementById('search').value.toLowerCase().trim();
+      const search = (document.getElementById('search').value || '').toLowerCase().trim();
 
       const rows = allData
         .filter(r => {
@@ -282,90 +676,100 @@
         })
         .filter(r => {
           if (!search) return true;
-          const nombre = (r.nombre || '').toLowerCase();
-          const ci     = (r.ci     || '').toLowerCase();
-          return nombre.includes(search) || ci.includes(search);
+          return (r.nombre || '').toLowerCase().includes(search) ||
+                 (r.ci     || '').toLowerCase().includes(search);
         })
         .slice()
         .reverse();
 
       if (!rows.length) {
-        tbody.innerHTML = '<tr class="empty-row"><td colspan="5">Sin registros para mostrar</td></tr>';
+        tbody.innerHTML = `
+          <tr><td colspan="5">
+            <div class="empty-msg">
+              <div class="empty-icon">🔍</div>
+              Sin registros para mostrar
+            </div>
+          </td></tr>`;
         return;
       }
 
       tbody.innerHTML = rows.map(r => {
-        const ok   = r.permitido === true;
-        const conf = r.confianza || 0;
-        const color = confColor(conf);
-        const barWidth = Math.min(conf, 100);
+        const ok       = r.permitido === true;
+        const conf     = r.confianza || 0;
+        const color    = confColor(conf);
+        const barW     = Math.min(conf, 100);
 
         return `
           <tr>
-            <td style="color:#666;font-size:12.5px;">${r.timestamp_local || '—'}</td>
+            <td class="ts">${r.timestamp_local || '—'}</td>
             <td>
               <span class="badge ${ok ? 'ok' : 'deny'}">
+                <span class="badge-dot"></span>
                 ${ok ? 'PERMITIDO' : 'DENEGADO'}
               </span>
             </td>
-            <td style="font-weight:500;">${r.nombre || '—'}</td>
-            <td style="color:#666;">${r.ci || '—'}</td>
+            <td class="name-cell">${r.nombre || '—'}</td>
+            <td class="ci-cell">${r.ci || '—'}</td>
             <td>
-              <div class="conf-bar-wrap">
-                <div class="conf-bar">
-                  <div class="conf-bar-fill" style="width:${barWidth}%;background:${color};"></div>
+              <div class="conf-cell">
+                <div class="conf-track">
+                  <div class="conf-fill" style="width:${barW}%;background:${color};"></div>
                 </div>
-                <span style="font-size:12px;font-weight:600;color:${color};min-width:32px;">
-                  ${conf > 0 ? conf + '%' : '—'}
-                </span>
+                <span class="conf-num" style="color:${color};">${conf > 0 ? conf + '%' : '—'}</span>
               </div>
             </td>
           </tr>`;
       }).join('');
     }
 
-    // ╔══════════════════════════════════════════╗
-    // ║     ACTUALIZAR ESTADÍSTICAS              ║
-    // ╚══════════════════════════════════════════╝
-    function updateStats() {
-      const total   = allData.length;
-      const ok      = allData.filter(r => r.permitido === true).length;
-      const no      = allData.filter(r => r.permitido === false).length;
-      const confArr = allData.filter(r => r.confianza > 0).map(r => r.confianza);
+    function updateStats(data) {
+      const total   = data.length;
+      const ok      = data.filter(r => r.permitido === true).length;
+      const no      = data.filter(r => r.permitido === false).length;
+      const confArr = data.filter(r => r.confianza > 0).map(r => r.confianza);
       const avg     = confArr.length
-        ? Math.round(confArr.reduce((a, b) => a + b, 0) / confArr.length)
+        ? Math.round(confArr.reduce((a,b) => a+b, 0) / confArr.length)
         : 0;
 
       document.getElementById('cnt-total').textContent = total;
       document.getElementById('cnt-ok').textContent    = ok;
       document.getElementById('cnt-no').textContent    = no;
       document.getElementById('cnt-conf').textContent  = avg ? avg + '%' : '—';
+
+      if (total > 0) {
+        document.getElementById('pct-ok').textContent = Math.round(ok/total*100) + '% del total';
+        document.getElementById('pct-no').textContent = Math.round(no/total*100) + '% del total';
+      }
     }
 
-    // ╔══════════════════════════════════════════╗
-    // ║     ESCUCHAR FIREBASE EN TIEMPO REAL     ║
-    // ╚══════════════════════════════════════════╝
+    function setLive(on, msg) {
+      const pill = document.getElementById('live-pill');
+      const txt  = document.getElementById('live-txt');
+      pill.className = 'live-pill' + (on ? '' : ' error');
+      txt.textContent = msg;
+    }
+
     ref.limitToLast(100).on('value',
       function(snapshot) {
         const data = snapshot.val();
         allData = data ? Object.values(data) : [];
-        updateStats();
+        updateStats(allData);
         renderTable();
-
-        document.getElementById('dot').className       = 'dot on';
-        document.getElementById('live-txt').textContent = 'en vivo';
+        setLive(true, 'EN VIVO');
+        const now = new Date();
+        document.getElementById('last-update').textContent =
+          'Actualizado: ' + now.toLocaleTimeString('es-BO', { hour12: false });
       },
       function(error) {
-        document.getElementById('dot').className       = 'dot err';
-        document.getElementById('live-txt').textContent = 'error: ' + error.code;
-
-        document.getElementById('tbody').innerHTML =
-          `<tr class="empty-row">
-             <td colspan="5" style="color:#c0392b;">
-               ❌ Error al conectar: <strong>${error.message}</strong><br>
-               <small>Verifica las reglas de Firebase Realtime Database</small>
-             </td>
-           </tr>`;
+        setLive(false, 'ERROR');
+        document.getElementById('tbody').innerHTML = `
+          <tr><td colspan="5">
+            <div class="empty-msg">
+              <div class="empty-icon">⚠️</div>
+              Error al conectar: ${error.message}<br>
+              <small style="font-size:11px;color:#6b7280;">Verifica las reglas de Firebase Realtime Database</small>
+            </div>
+          </td></tr>`;
       }
     );
   </script>
