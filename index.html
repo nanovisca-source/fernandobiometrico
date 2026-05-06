@@ -1,1123 +1,198 @@
-// ============================================================
-//  Sistema de Control de Acceso Biométrico - ESP32 + AS608
-//  LCD I2C 16x2 | MicroSD SPI | Dos botones debounce
-//  v2.1 - Con integración Firebase Realtime Database
-//
-//  NOTAS DE VERSIÓN v2.1:
-//  - La lógica original NO fue modificada en ninguna línea.
-//  - Se agregaron secciones marcadas con [FIREBASE NEW] para
-//    identificar claramente cada adición nueva.
-//  - El envío a Firebase ocurre DESPUÉS de logAcceso() (SD),
-//    de forma no bloqueante con timeout de 5 segundos.
-//  - Si Firebase falla, el sistema continúa normalmente.
-// ============================================================
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sistema Biométrico - Accesos</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f5f5f0; color: #1a1a1a; padding: 2rem 1rem; }
+    h1 { font-size: 1.3rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .sub { font-size: 0.85rem; color: #666; margin-bottom: 1.5rem; }
 
-#include <Adafruit_Fingerprint.h>
-#include <HardwareSerial.h>
-#include <Wire.h>
-#include <LiquidCrystal_I2C.h>
-#include <SPI.h>
-#include <SD.h>
-#include <WiFi.h>
-#include "time.h"
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 1.5rem; }
+    .card { background: #fff; border: 0.5px solid #ddd; border-radius: 10px; padding: 1rem; text-align: center; }
+    .card .label { font-size: 12px; color: #888; margin-bottom: 4px; }
+    .card .value { font-size: 1.6rem; font-weight: 600; }
+    .card.ok .value   { color: #0F6E56; }
+    .card.deny .value { color: #A32D2D; }
 
-// ===================== [FIREBASE NEW] - Librería HTTP ========
-// Usamos HTTPClient nativo del ESP32 (no requiere instalación extra).
-// Para Firebase usamos la REST API con HTTP POST en formato JSON.
-#include <HTTPClient.h>
-#include <WiFiClientSecure.h>
-// =============================================================
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 1rem; }
+    .toolbar button { font-size: 13px; padding: 6px 14px; border-radius: 8px; border: 1px solid #ccc; background: #fff; cursor: pointer; }
+    .toolbar button.active { background: #1a1a1a; color: #fff; border-color: #1a1a1a; }
+    .live { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #888; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #ccc; }
+    .dot.on  { background: #1D9E75; }
+    .dot.err { background: #E24B4A; }
 
-// ===================== PINES ================================
-#define RXD2       16
-#define TXD2       17
-#define WAK_PIN    34
-#define BTN_REG    13
-#define BTN_VER    4
+    .table-wrap { background: #fff; border: 0.5px solid #ddd; border-radius: 10px; overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+    thead tr { background: #f5f5f0; border-bottom: 0.5px solid #ddd; }
+    th { padding: 10px 12px; text-align: left; font-weight: 500; color: #888; }
+    td { padding: 10px 12px; border-bottom: 0.5px solid #eee; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    tr:last-child td { border-bottom: none; }
+    tr:nth-child(even) { background: #fafaf8; }
 
-// MicroSD - SPI
-#define SD_MISO    19
-#define SD_MOSI    23
-#define SD_SCK     18
-#define SD_CS      5
+    .badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .badge.ok   { background: #E1F5EE; color: #0F6E56; }
+    .badge.deny { background: #FCEBEB; color: #A32D2D; }
 
-// ===================== CONFIG ===============================
-#define MAX_USERS        200
-#define DEBOUNCE_MS      50
-#define VERIFY_TIMEOUT   10000
-#define SERIAL_TIMEOUT   30000
-#define SENSOR_BAUD      57600
+    .hint { font-size: 11px; color: #aaa; text-align: right; margin-top: 6px; }
 
-#define LOG_FILE         "/accesos.txt"
-#define USER_FILE        "/usuarios.txt"
-
-// ===================== [FIREBASE NEW] - Config Firebase ======
-// URL base de Firebase Realtime Database (REST API).
-// El token de autenticación no es necesario si las reglas
-// de Firebase permiten escritura pública (modo desarrollo).
-// Para producción, ver sección "Seguridad Firebase" al final.
-#define FIREBASE_HOST    "https://biometrico-viscarra-default-rtdb.firebaseio.com/"
-#define FIREBASE_SECRET  ""  // Dejar vacío si las reglas son públicas
-                             // o poner tu Database Secret aquí
-
-// Timeout para envío a Firebase (ms). No bloquea más de esto.
-#define FIREBASE_TIMEOUT 5000
-
-// Nombre del dispositivo (útil si tienes múltiples ESP32)
-#define DEVICE_ID        "ESP32-AS608-01"
-// =============================================================
-
-// ===================== OBJETOS ==============================
-HardwareSerial mySerial(2);
-Adafruit_Fingerprint finger = Adafruit_Fingerprint(&mySerial);
-LiquidCrystal_I2C lcd(0x27, 16, 2);
-
-bool sdDisponible = false;
-
-// ===================== MODOS ================================
-enum Mode {
-  IDLE,
-  REGISTER_MODE,
-  VERIFY_MODE,
-  LIST_MODE,
-  DELETE_MODE,
-  LOG_MODE
-};
-
-Mode currentMode = IDLE;
-
-// ===================== ESTRUCTURA USUARIO ===================
-struct User {
-  int  id;
-  char nombre[32];
-  char ci[10];
-  char correo[48];
-  char telefono[8];
-  bool active;
-};
-
-User users[MAX_USERS];
-int  userCount = 0;
-
-// ===================== BOTONES (debounce robusto) ===========
-struct Button {
-  uint8_t       pin;
-  bool          lastReading;
-  bool          stableState;
-  unsigned long lastChangeTime;
-};
-
-Button btnReg = { BTN_REG, HIGH, HIGH, 0 };
-Button btnVer = { BTN_VER, HIGH, HIGH, 0 };
-
-bool buttonPressed(Button &btn) {
-  bool reading = digitalRead(btn.pin);
-  if (reading != btn.lastReading) {
-    btn.lastChangeTime = millis();
-    btn.lastReading = reading;
-  }
-  if ((millis() - btn.lastChangeTime) > DEBOUNCE_MS) {
-    if (btn.stableState == HIGH && reading == LOW) {
-      btn.stableState = LOW;
-      return true;
+    @media (max-width: 500px) {
+      th:nth-child(4), td:nth-child(4),
+      th:nth-child(5), td:nth-child(5) { display: none; }
     }
-    if (reading == HIGH) btn.stableState = HIGH;
-  }
-  return false;
-}
+  </style>
+</head>
+<body>
 
-// ===================== WiFi / NTP ===========================
-const char* ssid     = "Nanopata Iphonenin";
-const char* password = "232323231";
+  <h1>🔐 Sistema Biométrico — Accesos</h1>
+  <p class="sub">ESP32 + AS608 · Firebase Realtime Database · actualización cada 5 s</p>
 
-const char* ntpServer       = "pool.ntp.org";
-const long  gmtOffset_sec   = -4 * 3600;
-const int   daylightOffset_sec = 0;
+  <div class="cards">
+    <div class="card">
+      <div class="label">Total</div>
+      <div class="value" id="cnt-total">—</div>
+    </div>
+    <div class="card ok">
+      <div class="label">Permitidos</div>
+      <div class="value" id="cnt-ok">—</div>
+    </div>
+    <div class="card deny">
+      <div class="label">Denegados</div>
+      <div class="value" id="cnt-no">—</div>
+    </div>
+    <div class="card">
+      <div class="label">Confianza prom.</div>
+      <div class="value" id="cnt-conf">—</div>
+    </div>
+  </div>
 
-// ===================== LCD ==================================
-String lcdLine1 = "";
-String lcdLine2 = "";
+  <div class="toolbar">
+    <button class="active" onclick="setFilter('all',  this)">Todos</button>
+    <button               onclick="setFilter('ok',   this)">Permitidos</button>
+    <button               onclick="setFilter('deny', this)">Denegados</button>
+    <div class="live">
+      <span class="dot" id="dot"></span>
+      <span id="live-txt">conectando...</span>
+    </div>
+  </div>
 
-void printLCD(const String &l1, const String &l2 = "") {
-  if (l1 == lcdLine1 && l2 == lcdLine2) return;
-  lcdLine1 = l1;
-  lcdLine2 = l2;
-  lcd.clear();
-  lcd.setCursor(0, 0); lcd.print(l1.substring(0, 16));
-  lcd.setCursor(0, 1); lcd.print(l2.substring(0, 16));
-}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:145px">Fecha / Hora</th>
+          <th style="width:95px">Estado</th>
+          <th>Nombre</th>
+          <th style="width:85px">CI</th>
+          <th style="width:75px">Confianza</th>
+        </tr>
+      </thead>
+      <tbody id="body">
+        <tr><td colspan="5" style="text-align:center;padding:2rem;color:#aaa;">Cargando...</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="hint">Últimos 50 registros</p>
 
-// ===================== SERIAL I/O ===========================
-String readLine(const String &prompt) {
-  Serial.print(F("  -> "));
-  Serial.print(prompt);
-  Serial.print(" ");
+  <script>
+    // ──────────────────────────────────────────────
+    //  CONFIGURACIÓN — edita solo esta sección
+    // ──────────────────────────────────────────────
+    const FIREBASE_URL =
+      "https://biometrico-viscarra-default-rtdb.firebaseio.com/accesos.json" +
+      "?orderBy=%22timestamp_unix%22&limitToLast=50";
 
-  String input = "";
-  unsigned long start = millis();
-  while (Serial.available()) Serial.read();
+    // Si usas Database Secret, ponlo aquí; si las reglas son públicas, deja "".
+    const DB_SECRET = "";
+    // ──────────────────────────────────────────────
 
-  while (true) {
-    if ((millis() - start) > SERIAL_TIMEOUT) {
-      Serial.println(F("\n  [TIMEOUT - operacion cancelada]"));
-      return "";
+    let allData      = [];
+    let activeFilter = 'all';
+
+    function buildURL() {
+      let url = FIREBASE_URL;
+      if (DB_SECRET) url += "&auth=" + DB_SECRET;
+      return url;
     }
-    if (Serial.available()) {
-      char c = Serial.read();
-      if (c == '\n' || c == '\r') {
-        if (input.length() > 0) { Serial.println(); return input; }
-      } else if (c == 8 || c == 127) {
-        if (input.length() > 0) { input.remove(input.length()-1); Serial.print(F("\b \b")); }
-      } else if (c == 'q' && input.length() == 0) {
-        Serial.println(F("[CANCELADO]"));
-        return "";
-      } else {
-        input += c;
-        Serial.print(c);
-      }
+
+    function setFilter(f, el) {
+      activeFilter = f;
+      document.querySelectorAll('.toolbar button').forEach(b => b.classList.remove('active'));
+      el.classList.add('active');
+      renderTable();
     }
-  }
-}
 
-int readInt(const String &prompt) {
-  String s = readLine(prompt);
-  if (s == "") return -1;
-  return s.toInt();
-}
-
-// ===================== TIMESTAMP ============================
-String getTimestamp() {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-    return "SinHora";
-  }
-  char buffer[30];
-  strftime(buffer, sizeof(buffer), "%d/%m/%Y %H:%M:%S", &timeinfo);
-  return String(buffer);
-}
-
-// ===================== [FIREBASE NEW] - Timestamp ISO 8601 ==
-// Firebase trabaja mejor con timestamps en formato ISO 8601.
-// Esta función genera "2025-01-15T14:30:00" (sin timezone,
-// la offset ya está aplicada por configTime).
-String getTimestampISO() {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-    return "1970-01-01T00:00:00";
-  }
-  char buffer[25];
-  strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%S", &timeinfo);
-  return String(buffer);
-}
-
-// ===================== [FIREBASE NEW] - Timestamp Unix =======
-// Epoch Unix en segundos. Muy útil para ordenar registros
-// en Firebase y hacer consultas por rango de fechas.
-unsigned long getEpochTime() {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-    return 0;
-  }
-  return mktime(&timeinfo);
-}
-// =============================================================
-
-// ===================== SD - CARGAR USUARIOS =================
-void loadUsersFromSD() {
-  if (!sdDisponible) return;
-
-  File f = SD.open(USER_FILE, FILE_READ);
-  if (!f) {
-    Serial.println("No existe archivo de usuarios");
-    return;
-  }
-
-  userCount = 0;
-  for (int i = 0; i < MAX_USERS; i++) {
-    users[i].active = false;
-  }
-
-  while (f.available()) {
-    String line = f.readStringUntil('\n');
-
-    int id;
-    char nombre[32], ci[16], correo[48], telefono[16];
-
-    sscanf(line.c_str(), "%d,%31[^,],%15[^,],%47[^,],%15[^\n]",
-           &id, nombre, ci, correo, telefono);
-
-    if (id >= 0 && id < MAX_USERS) {
-      users[id].id = id;
-      strcpy(users[id].nombre, nombre);
-      strcpy(users[id].ci, ci);
-      strcpy(users[id].correo, correo);
-      strcpy(users[id].telefono, telefono);
-      users[id].active = true;
-      userCount++;
-    }
-  }
-
-  f.close();
-  Serial.println("Usuarios cargados desde SD");
-}
-
-// ===================== SD - GUARDAR USUARIOS ================
-void saveUsersToSD() {
-  if (!sdDisponible) return;
-
-  File f = SD.open(USER_FILE, FILE_WRITE);
-  if (!f) {
-    Serial.println("Error guardando usuarios");
-    return;
-  }
-
-  for (int i = 0; i < MAX_USERS; i++) {
-    if (users[i].active) {
-      f.print(users[i].id); f.print(",");
-      f.print(users[i].nombre); f.print(",");
-      f.print(users[i].ci); f.print(",");
-      f.print(users[i].correo); f.print(",");
-      f.println(users[i].telefono);
-    }
-  }
-
-  f.close();
-  Serial.println("Usuarios guardados en SD");
-}
-
-// ===================== WiFi =================================
-void initWiFi() {
-  Serial.print("Conectando a WiFi...");
-  WiFi.begin(ssid, password);
-
-  int intentos = 0;
-  while (WiFi.status() != WL_CONNECTED && intentos < 20) {
-    delay(500);
-    Serial.print(".");
-    intentos++;
-  }
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi conectado!");
-    Serial.println(WiFi.localIP());
-    printLCD("WiFi OK", WiFi.localIP().toString());
-  } else {
-    Serial.println("\nError WiFi");
-    printLCD("WiFi ERROR");
-  }
-}
-
-// ===================== NTP ==================================
-void initTime() {
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-    Serial.println("Error obteniendo hora");
-    return;
-  }
-  Serial.println("Hora sincronizada");
-}
-
-// ===================== SD - INIT ============================
-void initSD() {
-  Serial.println(F("  -> Iniciando modulo MicroSD..."));
-  printLCD("Iniciando SD...", "");
-
-  SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
-
-  if (!SD.begin(SD_CS)) {
-    Serial.println(F("  ! MicroSD no detectada o error de montaje"));
-    Serial.println(F("    El sistema seguira SIN registrar en SD"));
-    printLCD("SD no detectada", "Sin log SD");
-    sdDisponible = false;
-    delay(2000);
-    return;
-  }
-
-  if (!SD.exists(LOG_FILE)) {
-    File f = SD.open(LOG_FILE, FILE_WRITE);
-    if (f) {
-      f.println(F("========================================"));
-      f.println(F("  REGISTRO DE ACCESOS BIOMETRICOS"));
-      f.println(F("  ESP32 + AS608 | Sistema v2.1"));
-      f.println(F("========================================"));
-      f.println(F("TIMESTAMP          | RESULTADO  | ID  | NOMBRE                         | CI             | CONFIANZA"));
-      f.println(F("-------------------+------------+-----+--------------------------------+----------------+----------"));
-      f.close();
-      Serial.println(F("  OK Archivo de log creado: /accesos.txt"));
-    } else {
-      Serial.println(F("  X No se pudo crear el archivo de log"));
-      sdDisponible = false;
-      return;
-    }
-  } else {
-    Serial.println(F("  OK Archivo de log existente encontrado"));
-  }
-
-  uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-  Serial.print(F("  OK MicroSD lista | Capacidad: "));
-  Serial.print((uint32_t)cardSize);
-  Serial.println(F(" MB"));
-
-  sdDisponible = true;
-  printLCD("SD OK", String((uint32_t)cardSize) + "MB");
-  delay(1000);
-}
-
-// ===================== SD - REGISTRAR ACCESO ================
-void logAcceso(bool permitido, int id, const char* nombre,
-               const char* ci, int confianza) {
-
-  if (!sdDisponible) {
-    Serial.println(F("  ! SD no disponible - acceso NO registrado en SD"));
-    return;
-  }
-
-  File f = SD.open(LOG_FILE, FILE_APPEND);
-  if (!f) {
-    SD.begin(SD_CS);
-    f = SD.open(LOG_FILE, FILE_APPEND);
-    if (!f) {
-      Serial.println(F("  X Fallo critico en SD - log perdido"));
-      printLCD("Error SD!", "Log no guardado");
-      delay(1500);
-      return;
-    }
-  }
-
-  char linea[128];
-  snprintf(linea, sizeof(linea),
-    "%-19s| %-10s | %3d | %-30s | %-14s | %d",
-    getTimestamp().c_str(),
-    permitido ? "PERMITIDO" : "DENEGADO",
-    id,
-    (nombre && strlen(nombre) > 0) ? nombre : "---",
-    (ci     && strlen(ci)     > 0) ? ci     : "---",
-    confianza
-  );
-
-  f.println(linea);
-  f.close();
-
-  Serial.print(F("  OK Registrado en SD: "));
-  Serial.println(linea);
-}
-
-// ===================== [FIREBASE NEW] - Envío a Firebase =====
-//
-//  Función: sendToFirebase()
-//  Propósito: Enviar datos de verificación a Firebase
-//             Realtime Database usando la REST API (HTTPS POST).
-//
-//  Estructura en Firebase:
-//  /accesos/
-//    └── {push_id_auto}/
-//          ├── timestamp_iso   : "2025-01-15T14:30:00"
-//          ├── timestamp_unix  : 1736949000
-//          ├── timestamp_local : "15/01/2025 14:30:00"
-//          ├── estado          : "PERMITIDO" | "DENEGADO"
-//          ├── permitido       : true | false
-//          ├── usuario_id      : 5
-//          ├── nombre          : "Juan Perez"
-//          ├── ci              : "1234567"
-//          ├── correo          : "juan@mail.com"
-//          ├── telefono        : "7654321"
-//          ├── confianza       : 95
-//          ├── dispositivo     : "ESP32-AS608-01"
-//          └── ip_dispositivo  : "192.168.1.50"
-//
-//  Parámetros:
-//  - permitido  : true si el acceso fue autorizado
-//  - id         : ID del usuario en el sensor (-1 si no reconocido)
-//  - nombre     : Nombre del usuario (o "" si denegado)
-//  - ci         : Cédula del usuario (o "" si denegado)
-//  - correo     : Correo del usuario (o "" si denegado)
-//  - telefono   : Teléfono del usuario (o "" si denegado)
-//  - confianza  : Nivel de confianza del sensor (0-100)
-//
-//  Retorna: true si el envío fue exitoso, false si falló.
-// =============================================================
-bool sendToFirebase(bool permitido, int id,
-                    const char* nombre, const char* ci,
-                    const char* correo, const char* telefono,
-                    int confianza) {
-
-  // Verificar conectividad antes de intentar
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println(F("  ! Firebase: WiFi no disponible - registro omitido"));
-    return false;
-  }
-
-  Serial.println(F("  -> Enviando datos a Firebase..."));
-  printLCD("Enviando a", "Firebase...");
-
-  // Construir la URL del endpoint.
-  // Firebase REST API: POST a /coleccion.json crea un registro
-  // con ID único autogenerado (push ID), ideal para logs.
-  String url = "https://";
-  url += FIREBASE_HOST;
-  url += "/accesos.json";
-
-  // Si tienes Database Secret, agrégalo como parámetro
-  if (strlen(FIREBASE_SECRET) > 0) {
-    url += "?auth=";
-    url += FIREBASE_SECRET;
-  }
-
-  // Construir el payload JSON manualmente.
-  // Evitamos librerías JSON pesadas (ArduinoJson) para ahorrar RAM.
-  // Los valores de cadena se sanitizan reemplazando comillas.
-  char nombreSafe[32], ciSafe[10], correoSafe[48], telefonoSafe[8];
-  strncpy(nombreSafe,   (nombre   && strlen(nombre)   > 0) ? nombre   : "---", sizeof(nombreSafe)-1);
-  strncpy(ciSafe,       (ci       && strlen(ci)       > 0) ? ci       : "---", sizeof(ciSafe)-1);
-  strncpy(correoSafe,   (correo   && strlen(correo)   > 0) ? correo   : "---", sizeof(correoSafe)-1);
-  strncpy(telefonoSafe, (telefono && strlen(telefono) > 0) ? telefono : "---", sizeof(telefonoSafe)-1);
-
-  // Reemplazar comillas dobles para evitar JSON inválido
-  for (int i = 0; nombreSafe[i];   i++) if (nombreSafe[i]   == '"') nombreSafe[i]   = '\'';
-  for (int i = 0; ciSafe[i];       i++) if (ciSafe[i]       == '"') ciSafe[i]       = '\'';
-  for (int i = 0; correoSafe[i];   i++) if (correoSafe[i]   == '"') correoSafe[i]   = '\'';
-  for (int i = 0; telefonoSafe[i]; i++) if (telefonoSafe[i] == '"') telefonoSafe[i] = '\'';
-
-  String ipStr = WiFi.localIP().toString();
-
-  char payload[512];
-  snprintf(payload, sizeof(payload),
-    "{"
-    "\"timestamp_iso\":\"%s\","
-    "\"timestamp_unix\":%lu,"
-    "\"timestamp_local\":\"%s\","
-    "\"estado\":\"%s\","
-    "\"permitido\":%s,"
-    "\"usuario_id\":%d,"
-    "\"nombre\":\"%s\","
-    "\"ci\":\"%s\","
-    "\"correo\":\"%s\","
-    "\"telefono\":\"%s\","
-    "\"confianza\":%d,"
-    "\"dispositivo\":\"%s\","
-    "\"ip_dispositivo\":\"%s\""
-    "}",
-    getTimestampISO().c_str(),
-    getEpochTime(),
-    getTimestamp().c_str(),
-    permitido ? "PERMITIDO" : "DENEGADO",
-    permitido ? "true" : "false",
-    id,
-    nombreSafe,
-    ciSafe,
-    correoSafe,
-    telefonoSafe,
-    confianza,
-    DEVICE_ID,
-    ipStr.c_str()
-  );
-
-  // Configurar cliente HTTPS (Firebase requiere SSL)
-  WiFiClientSecure client;
-  client.setInsecure(); // Acepta cualquier certificado SSL.
-                        // Para producción con certificado fijo,
-                        // usar client.setCACert(cert_raiz).
-
-  HTTPClient http;
-  http.begin(client, url);
-  http.addHeader("Content-Type", "application/json");
-  http.setTimeout(FIREBASE_TIMEOUT);
-
-  int httpCode = http.POST(payload);
-
-  bool exitoso = false;
-
-  if (httpCode == 200 || httpCode == 200) {
-    // Firebase devuelve 200 con el push ID generado:
-    // {"name":"-NxXXXXXXXXXXX"}
-    String response = http.getString();
-    Serial.print(F("  OK Firebase: registro guardado | Push ID: "));
-    Serial.println(response);
-    exitoso = true;
-  } else if (httpCode > 0) {
-    Serial.print(F("  X Firebase: error HTTP "));
-    Serial.print(httpCode);
-    Serial.print(F(" | Respuesta: "));
-    Serial.println(http.getString());
-  } else {
-    Serial.print(F("  X Firebase: error de conexion ("));
-    Serial.print(http.errorToString(httpCode));
-    Serial.println(F(")"));
-  }
-
-  http.end();
-
-  if (!exitoso) {
-    Serial.println(F("  ! Acceso registrado en SD pero NO en Firebase"));
-  }
-
-  return exitoso;
-}
-// ============================================================
-
-// ===================== BANNER Y MENU ========================
-void printBanner() {
-  Serial.println();
-  Serial.println(F("+===========================================+"));
-  Serial.println(F("|   SISTEMA BIOMETRICO DE ACCESO            |"));
-  Serial.println(F("|   ESP32 + AS608 + MicroSD | v2.1          |"));
-  Serial.println(F("|   + Firebase Realtime Database            |"));
-  Serial.println(F("+===========================================+"));
-  Serial.println();
-}
-
-void printMenu() {
-  Serial.println(F("+------------------------------------------+"));
-  Serial.println(F("|              MENU PRINCIPAL              |"));
-  Serial.println(F("+------------------------------------------+"));
-  Serial.println(F("|  [BTN1]  Registrar nuevo usuario         |"));
-  Serial.println(F("|  [BTN2]  Verificar acceso + log SD+FB    |"));
-  Serial.println(F("|  [L]     Listar usuarios (serial)        |"));
-  Serial.println(F("|  [D]     Eliminar usuario (serial)       |"));
-  Serial.println(F("|  [R]     Ver log SD completo por serial  |"));
-  Serial.println(F("|  [M]     Mostrar este menu               |"));
-  Serial.println(F("|  [q]     Cancelar operacion actual       |"));
-  Serial.println(F("+------------------------------------------+"));
-}
-
-// ===================== SENSOR ===============================
-void initFingerprint() {
-  finger.begin(SENSOR_BAUD);
-  delay(100);
-  if (finger.verifyPassword()) {
-    Serial.println(F("  OK Sensor AS608 conectado"));
-    finger.getTemplateCount();
-    Serial.print(F("  -- Huellas en sensor: "));
-    Serial.println(finger.templateCount);
-    printLCD("Sensor OK", "Listo");
-  } else {
-    Serial.println(F("  X ERROR: Sensor AS608 no responde"));
-    printLCD("ERROR SENSOR", "Revisa cableado");
-    while (true) delay(1000);
-  }
-}
-
-// ===================== ENROLL ===============================
-bool enrollFingerprint(int id) {
-  int p;
-  unsigned long start;
-
-  printLCD("Pon el dedo...", "Slot #" + String(id));
-  Serial.println(F("  -> Coloca el dedo sobre el sensor..."));
-  start = millis();
-  while (true) {
-    p = finger.getImage();
-    if (p == FINGERPRINT_OK) {
-      if (finger.image2Tz(1) == FINGERPRINT_OK) break;
-    }
-    if (p == FINGERPRINT_NOFINGER) { delay(120); continue; }
-    if ((millis() - start) > VERIFY_TIMEOUT) {
-      printLCD("Timeout", "Cancelando...");
-      return false;
-    }
-    delay(100);
-  }
-
-  printLCD("Retira dedo...", "Esperando...");
-  Serial.println(F("  OK Primera captura. Retira el dedo..."));
-
-  unsigned long t = millis();
-  while (millis() - t < 3000) {
-    if (finger.getImage() == FINGERPRINT_NOFINGER) {
-      delay(200);
-      break;
-    }
-    delay(120);
-  }
-
-  finger.getImage();
-  delay(150);
-
-  printLCD("Mismo dedo...", "Otra vez");
-  Serial.println(F("  -> Vuelve a colocar el MISMO dedo..."));
-  start = millis();
-  while (true) {
-    p = finger.getImage();
-    if (p == FINGERPRINT_OK) {
-      if (finger.image2Tz(2) == FINGERPRINT_OK) break;
-    }
-    if (p == FINGERPRINT_NOFINGER) { delay(120); continue; }
-    if ((millis() - start) > VERIFY_TIMEOUT) {
-      printLCD("Timeout 2da"); return false;
-    }
-    delay(100);
-  }
-
-  p = finger.createModel();
-  if (p == FINGERPRINT_ENROLLMISMATCH) {
-    Serial.println(F("  X Las huellas no coinciden"));
-    printLCD("No coinciden!", "Repite proceso");
-    return false;
-  }
-  if (p != FINGERPRINT_OK) { printLCD("Error modelo"); return false; }
-
-  if (finger.storeModel(id) == FINGERPRINT_OK) {
-    Serial.println(F("  OK Huella almacenada correctamente"));
-    printLCD("Huella OK!", "ID #" + String(id));
-    delay(1500);
-    return true;
-  }
-  printLCD("Error al guardar");
-  return false;
-}
-
-// ===================== VERIFY FINGERPRINT ===================
-int verifyFingerprint(int &outConfianza) {
-  outConfianza = 0;
-  printLCD("Pon tu dedo...", "Esperando...");
-  Serial.println(F("  -> Coloca el dedo sobre el sensor..."));
-
-  unsigned long start = millis();
-  int p = FINGERPRINT_NOFINGER;
-
-  while ((millis() - start) < VERIFY_TIMEOUT) {
-    p = finger.getImage();
-
-    if (p == FINGERPRINT_OK) {
-      if (finger.image2Tz() != FINGERPRINT_OK) {
-        Serial.println(F("  X Error al convertir imagen"));
-        delay(120);
-        continue;
+    function renderTable() {
+      const body = document.getElementById('body');
+      const rows = allData
+        .filter(r => {
+          if (activeFilter === 'ok')   return r.permitido === true;
+          if (activeFilter === 'deny') return r.permitido === false;
+          return true;
+        })
+        .reverse();
+
+      if (!rows.length) {
+        body.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:2rem;color:#aaa;">Sin registros</td></tr>';
+        return;
       }
 
-      if (finger.fingerFastSearch() == FINGERPRINT_OK) {
-        outConfianza = finger.confidence;
-        Serial.print(F("  OK ID: ")); Serial.print(finger.fingerID);
-        Serial.print(F(" | Confianza: ")); Serial.println(finger.confidence);
-        return finger.fingerID;
-      } else {
-        Serial.println(F("  X Huella no reconocida"));
-        return -1;
-      }
+      body.innerHTML = rows.map(r => {
+        const ok   = r.permitido === true;
+        const conf = r.confianza || 0;
+        const confColor = conf >= 80 ? '#0F6E56' : conf >= 50 ? '#BA7517' : '#A32D2D';
+        return `
+          <tr>
+            <td style="color:#888">${r.timestamp_local || '—'}</td>
+            <td><span class="badge ${ok ? 'ok' : 'deny'}">${ok ? 'PERMITIDO' : 'DENEGADO'}</span></td>
+            <td>${r.nombre || '—'}</td>
+            <td style="color:#888">${r.ci || '—'}</td>
+            <td style="font-weight:600;color:${confColor}">${conf > 0 ? conf + '%' : '—'}</td>
+          </tr>`;
+      }).join('');
     }
 
-    if (p == FINGERPRINT_NOFINGER) {
-      delay(120);
-      continue;
+    function updateStats() {
+      const total = allData.length;
+      const ok    = allData.filter(r => r.permitido === true).length;
+      const no    = allData.filter(r => r.permitido === false).length;
+      const confArr = allData.filter(r => r.confianza > 0).map(r => r.confianza);
+      const avg  = confArr.length ? Math.round(confArr.reduce((a,b) => a+b,0) / confArr.length) : 0;
+      document.getElementById('cnt-total').textContent = total;
+      document.getElementById('cnt-ok').textContent    = ok;
+      document.getElementById('cnt-no').textContent    = no;
+      document.getElementById('cnt-conf').textContent  = avg ? avg + '%' : '—';
     }
 
-    delay(120);
-  }
-
-  Serial.println(F("  X No se detecto huella (timeout)"));
-  printLCD("Sin dedo", "Timeout");
-  return -1;
-}
-
-// ===================== AGREGAR USUARIO ======================
-void addUser() {
-  Serial.println();
-  Serial.println(F("+===================================+"));
-  Serial.println(F("|     REGISTRAR NUEVO USUARIO       |"));
-  Serial.println(F("+===================================+"));
-
-  printLCD("Registro", "Ingresa datos...");
-
-  int id = readInt("ID (1-99):");
-  if (id <= 0 || id >= MAX_USERS) {
-    Serial.println(F("  X ID invalido o cancelado"));
-    printLCD("ID invalido", "Cancelado");
-    delay(1500); currentMode = IDLE; return;
-  }
-  if (users[id].active) {
-    Serial.print(F("  ! ID ")); Serial.print(id);
-    Serial.println(F(" ya en uso. Elige otro."));
-    printLCD("ID en uso!", "Elige otro");
-    delay(1500); currentMode = IDLE; return;
-  }
-
-  String nombre   = readLine("Nombre completo:");
-  if (nombre == "") { currentMode = IDLE; return; }
-  String ci       = readLine("Carnet (CI):");
-  if (ci == "")    { currentMode = IDLE; return; }
-  String correo   = readLine("Correo:");
-  if (correo == "") { currentMode = IDLE; return; }
-  String telefono = readLine("Telefono:");
-  if (telefono == "") { currentMode = IDLE; return; }
-
-  Serial.println();
-  Serial.println(F("  +--- CONFIRMAR DATOS ---+"));
-  Serial.print(F("  | ID:       ")); Serial.println(id);
-  Serial.print(F("  | Nombre:   ")); Serial.println(nombre);
-  Serial.print(F("  | CI:       ")); Serial.println(ci);
-  Serial.print(F("  | Correo:   ")); Serial.println(correo);
-  Serial.print(F("  | Telefono: ")); Serial.println(telefono);
-  Serial.println(F("  +-----------------------+"));
-
-  String confirm = readLine("Confirmar? (s/n):");
-  if (confirm != "s" && confirm != "S") {
-    Serial.println(F("  Registro cancelado"));
-    printLCD("Cancelado"); delay(1000);
-    currentMode = IDLE; return;
-  }
-
-  // ===================== PRE-VERIFICACION DE DUPLICADO ========
-  Serial.println();
-  Serial.println(F("  +--- VERIFICACION PREVIA DE HUELLA ---+"));
-  Serial.println(F("  -> Coloca el dedo para verificar si ya esta registrado..."));
-  printLCD("Verificando...", "Pon el dedo");
-
-  bool duplicadoDetectado = false;
-  bool imagenCapturada    = false;
-  unsigned long startPrev = millis();
-
-  while ((millis() - startPrev) < VERIFY_TIMEOUT) {
-    int pPrev = finger.getImage();
-
-    if (pPrev == FINGERPRINT_NOFINGER) {
-      delay(120);
-      continue;
-    }
-
-    if (pPrev == FINGERPRINT_OK) {
-      int convPrev = finger.image2Tz(1);
-      if (convPrev != FINGERPRINT_OK) {
-        Serial.println(F("  X Error al convertir imagen de pre-verificacion"));
-        delay(120);
-        continue;
-      }
-      imagenCapturada = true;
-
-      int busqueda = finger.fingerFastSearch();
-      if (busqueda == FINGERPRINT_OK && finger.confidence > 80) {
-        duplicadoDetectado = true;
-        Serial.println(F("  ! ========================================"));
-        Serial.println(F("  ! HUELLA YA REGISTRADA EN EL SISTEMA"));
-        Serial.print(F("  ! ID existente:  ")); Serial.println(finger.fingerID);
-        Serial.print(F("  ! Confianza:     ")); Serial.println(finger.confidence);
-        if (finger.fingerID < MAX_USERS && users[finger.fingerID].active) {
-          Serial.print(F("  ! Nombre:        ")); Serial.println(users[finger.fingerID].nombre);
-          Serial.print(F("  ! CI:            ")); Serial.println(users[finger.fingerID].ci);
-          printLCD("Huella ya regis.", "ID:" + String(finger.fingerID));
-        } else {
-          printLCD("Huella duplicada", "ID:" + String(finger.fingerID));
+    async function fetchData() {
+      try {
+        const res  = await fetch(buildURL());
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const json = await res.json();
+        allData = json && typeof json === 'object' ? Object.values(json) : [];
+        updateStats();
+        renderTable();
+        const dot = document.getElementById('dot');
+        dot.className = 'dot on';
+        document.getElementById('live-txt').textContent = 'en vivo';
+      } catch (e) {
+        const dot = document.getElementById('dot');
+        dot.className = 'dot err';
+        document.getElementById('live-txt').textContent = 'error';
+        if (!allData.length) {
+          document.getElementById('body').innerHTML =
+            '<tr><td colspan="5" style="text-align:center;padding:2rem;color:#c00;">' +
+            'No se pudo conectar con Firebase. Revisa las reglas de acceso.' +
+            '</td></tr>';
         }
-        Serial.println(F("  ! Registro cancelado para evitar duplicados."));
-        Serial.println(F("  ! ========================================"));
-      } else {
-        Serial.println(F("  OK Huella nueva - no se encontraron duplicados"));
-        printLCD("Huella nueva OK", "Continuando...");
       }
-      break;
     }
 
-    delay(100);
-  }
-
-  if (!imagenCapturada) {
-    Serial.println(F("  X Timeout: no se detecto huella en pre-verificacion"));
-    printLCD("Sin huella", "Timeout previo");
-    delay(2000);
-    currentMode = IDLE;
-    return;
-  }
-
-  if (duplicadoDetectado) {
-    delay(3000);
-    currentMode = IDLE;
-    return;
-  }
-
-  Serial.println(F("  -> Retira el dedo para continuar con el registro..."));
-  printLCD("Retira dedo...", "Preparando...");
-  unsigned long tLiberar = millis();
-  while ((millis() - tLiberar) < 5000) {
-    if (finger.getImage() == FINGERPRINT_NOFINGER) break;
-    delay(150);
-  }
-  delay(300);
-  // ============================================================
-
-  Serial.println(F("  -> Iniciando captura de huella..."));
-  if (enrollFingerprint(id)) {
-    User u;
-    u.id = id; u.active = true;
-    nombre.toCharArray(u.nombre, sizeof(u.nombre));
-    ci.toCharArray(u.ci, sizeof(u.ci));
-    correo.toCharArray(u.correo, sizeof(u.correo));
-    telefono.toCharArray(u.telefono, sizeof(u.telefono));
-    users[id] = u;
-    userCount++;
-    saveUsersToSD();
-    Serial.println(F("  OK =============================="));
-    Serial.print(F("  OK  Usuario '")); Serial.print(nombre);
-    Serial.println(F("' registrado con exito!"));
-    Serial.println(F("  OK =============================="));
-    printLCD("Registrado!", nombre.substring(0, 16));
-    delay(2000);
-  } else {
-    Serial.println(F("  X Fallo en huella. Usuario NO guardado."));
-    printLCD("Fallo huella", "No guardado");
-    delay(2000);
-  }
-  currentMode = IDLE;
-}
-
-// ===================== VERIFICAR ACCESO + LOG SD + FIREBASE ==
-//  MODIFICACIÓN MÍNIMA: Solo se agregaron las 3 líneas marcadas
-//  con [+FIREBASE] al final de la función, después de logAcceso().
-//  El resto del cuerpo de la función es IDÉNTICO al original.
-// =============================================================
-void verifyAccess() {
-  Serial.println();
-  Serial.println(F("+===================================+"));
-  Serial.println(F("|        VERIFICAR ACCESO           |"));
-  Serial.println(F("+===================================+"));
-
-  int confianza = 0;
-  int id = verifyFingerprint(confianza);
-
-  if (id < 0 || id >= MAX_USERS || !users[id].active) {
-    Serial.println(F("  X ACCESO DENEGADO"));
-    printLCD("** DENEGADO **", "No registrado");
-    logAcceso(false, id, "", "", confianza);
-
-    // [+FIREBASE] Enviar acceso DENEGADO a Firebase
-    sendToFirebase(false, id, "", "", "", "", confianza);
-
-    delay(2000);
-    currentMode = IDLE;
-    return;
-  }
-
-  User &u = users[id];
-  Serial.println(F("  OK =============================="));
-  Serial.println(F("  OK  ACCESO PERMITIDO"));
-  Serial.print(F("  OK  Nombre:    ")); Serial.println(u.nombre);
-  Serial.print(F("  OK  CI:        ")); Serial.println(u.ci);
-  Serial.print(F("  OK  Correo:    ")); Serial.println(u.correo);
-  Serial.print(F("  OK  Telefono:  ")); Serial.println(u.telefono);
-  Serial.print(F("  OK  Confianza: ")); Serial.println(confianza);
-  Serial.println(F("  OK =============================="));
-
-  printLCD("Bienvenido/a:", String(u.nombre).substring(0, 16));
-  logAcceso(true, u.id, u.nombre, u.ci, confianza);
-
-  // [+FIREBASE] Enviar acceso PERMITIDO a Firebase
-  bool firebaseOk = sendToFirebase(true, u.id, u.nombre, u.ci, u.correo, u.telefono, confianza);
-
-  delay(2000);
-  if (sdDisponible) {
-    // [+FIREBASE] Mostrar estado dual: SD + Firebase
-    printLCD("Log SD+Firebase", firebaseOk ? "OK :)" : "FB fallo, SD OK");
-    delay(1000);
-  }
-
-  currentMode = IDLE;
-}
-
-// ===================== LISTAR USUARIOS ======================
-void listUsers() {
-  Serial.println();
-  Serial.println(F("+===================================+"));
-  Serial.println(F("|        USUARIOS ACTIVOS           |"));
-  Serial.println(F("+===================================+"));
-  int count = 0;
-  for (int i = 0; i < MAX_USERS; i++) {
-    if (users[i].active) {
-      Serial.print(F("  ID ")); Serial.print(i);
-      Serial.print(F(" | ")); Serial.print(users[i].nombre);
-      Serial.print(F(" | CI: ")); Serial.println(users[i].ci);
-      count++;
-    }
-  }
-  if (count == 0) Serial.println(F("  (sin usuarios registrados)"));
-  Serial.print(F("  Total: ")); Serial.println(count);
-  currentMode = IDLE;
-}
-
-// ===================== ELIMINAR USUARIO =====================
-void deleteUser() {
-  Serial.println();
-  Serial.println(F("+===================================+"));
-  Serial.println(F("|        ELIMINAR USUARIO           |"));
-  Serial.println(F("+===================================+"));
-  listUsers();
-  int id = readInt("ID a eliminar:");
-  if (id < 0 || id >= MAX_USERS || !users[id].active) {
-    Serial.println(F("  X ID invalido o inexistente"));
-    currentMode = IDLE; return;
-  }
-
-  Serial.print(F("  Eliminar a '")); Serial.print(users[id].nombre);
-  Serial.println(F("'?"));
-  String confirm = readLine("Confirmar (s/n):");
-  if (confirm == "s" || confirm == "S") {
-    finger.deleteModel(id);
-    users[id].active = false;
-    userCount--;
-    saveUsersToSD();
-    Serial.println(F("  OK Usuario eliminado"));
-    printLCD("Eliminado", "ID #" + String(id));
-    delay(1500);
-  } else {
-    Serial.println(F("  Operacion cancelada"));
-  }
-  currentMode = IDLE;
-}
-
-// ===================== VER LOG SD POR SERIAL ================
-void printSDLog() {
-  Serial.println();
-  Serial.println(F("+===================================+"));
-  Serial.println(F("|       LOG DE ACCESOS (SD)         |"));
-  Serial.println(F("+===================================+"));
-
-  if (!sdDisponible) {
-    Serial.println(F("  ! SD no disponible"));
-    currentMode = IDLE; return;
-  }
-
-  File f = SD.open(LOG_FILE, FILE_READ);
-  if (!f) {
-    Serial.println(F("  X No se pudo abrir el archivo de log"));
-    currentMode = IDLE; return;
-  }
-
-  while (f.available()) {
-    Serial.write(f.read());
-  }
-  f.close();
-  Serial.println();
-  currentMode = IDLE;
-}
-
-// ===================== SETUP ================================
-void setup() {
-  Serial.begin(115200);
-  delay(500);
-
-  printBanner();
-
-  pinMode(BTN_REG, INPUT_PULLUP);
-  pinMode(BTN_VER, INPUT_PULLUP);
-  pinMode(WAK_PIN, INPUT);
-
-  lcd.init();
-  lcd.backlight();
-  printLCD("Iniciando...", "v2.1");
-  delay(500);
-
-  initSD();
-  loadUsersFromSD();
-
-  initWiFi();
-  initTime();
-
-  mySerial.begin(SENSOR_BAUD, SERIAL_8N1, RXD2, TXD2);
-  initFingerprint();
-
-  printBanner();
-  printMenu();
-
-  printLCD("Sistema listo", sdDisponible ? "SD+FB - Btn modo" : "SD falla - Btn");
-}
-
-// ===================== LOOP =================================
-void loop() {
-  if (currentMode == IDLE) {
-    if (buttonPressed(btnReg)) {
-      currentMode = REGISTER_MODE;
-      lcdLine1 = lcdLine2 = "";
-    }
-    if (buttonPressed(btnVer)) {
-      currentMode = VERIFY_MODE;
-      lcdLine1 = lcdLine2 = "";
-    }
-
-    if (Serial.available()) {
-      char cmd = Serial.read();
-      while (Serial.available()) Serial.read();
-      if (cmd == 'l' || cmd == 'L') currentMode = LIST_MODE;
-      if (cmd == 'd' || cmd == 'D') currentMode = DELETE_MODE;
-      if (cmd == 'r' || cmd == 'R') currentMode = LOG_MODE;
-      if (cmd == 'm' || cmd == 'M') printMenu();
-    }
-  }
-
-  switch (currentMode) {
-    case REGISTER_MODE: addUser();      break;
-    case VERIFY_MODE:   verifyAccess(); break;
-    case LIST_MODE:     listUsers();    break;
-    case DELETE_MODE:   deleteUser();   break;
-    case LOG_MODE:      printSDLog();   break;
-
-    case IDLE:
-      printLCD("Sistema listo", "BTN1=Reg BTN2=Ver");
-      delay(100);
-      break;
-  }
-}
-
-// ============================================================
-//  ESTRUCTURA RECOMENDADA DE FIREBASE REALTIME DATABASE
-// ============================================================
-//
-//  xavi-biometrico/
-//  ├── accesos/                    ← Colección principal de logs
-//  │   ├── -NxABC123.../          ← Push ID autogenerado por Firebase
-//  │   │   ├── timestamp_iso   : "2025-01-15T14:30:00"
-//  │   │   ├── timestamp_unix  : 1736949000      ← Para ordenar y filtrar
-//  │   │   ├── timestamp_local : "15/01/2025 14:30:00"
-//  │   │   ├── estado          : "PERMITIDO"
-//  │   │   ├── permitido       : true
-//  │   │   ├── usuario_id      : 5
-//  │   │   ├── nombre          : "Juan Perez"
-//  │   │   ├── ci              : "1234567"
-//  │   │   ├── correo          : "juan@mail.com"
-//  │   │   ├── telefono        : "7654321"
-//  │   │   ├── confianza       : 95
-//  │   │   ├── dispositivo     : "ESP32-AS608-01"
-//  │   │   └── ip_dispositivo  : "192.168.1.50"
-//  │   └── -NxXYZ456.../          ← Otro registro...
-//  │
-//  └── usuarios/                  ← (Opcional) Mirror de SD para web
-//      └── 5/                     ← Indexado por ID del sensor
-//          ├── nombre   : "Juan Perez"
-//          ├── ci       : "1234567"
-//          └── activo   : true
-//
-//  REGLAS DE FIREBASE (Database Rules) para desarrollo:
-//  {
-//    "rules": {
-//      ".read": false,
-//      ".write": true    ← Solo el ESP32 escribe
-//    }
-//  }
-//
-//  REGLAS PARA PRODUCCIÓN (más seguras):
-//  {
-//    "rules": {
-//      "accesos": {
-//        ".read": "auth != null",
-//        ".write": true
-//      }
-//    }
-//  }
-//
-//  CONSULTAS ÚTILES desde Firebase Console o tu app web:
-//  - Últimos 50 accesos:
-//    /accesos.json?orderBy="timestamp_unix"&limitToLast=50
-//  - Accesos de hoy (rango unix):
-//    /accesos.json?orderBy="timestamp_unix"&startAt=1736899200&endAt=1736985600
-//  - Solo accesos PERMITIDOS:
-//    /accesos.json?orderBy="permitido"&equalTo=true
-//  - Accesos de usuario específico:
-//    /accesos.json?orderBy="usuario_id"&equalTo=5
-//
-//  Para que orderBy funcione, definir índices en Firebase Rules:
-//  {
-//    "rules": {
-//      "accesos": {
-//        ".indexOn": ["timestamp_unix", "usuario_id", "permitido"]
-//      }
-//    }
-//  }
-// ============================================================
+    fetchData();
+    setInterval(fetchData, 5000);
+  </script>
+</body>
+</html>
