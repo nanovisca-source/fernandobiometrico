@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NANOBIOMÉTRICO — Control de Accesos</title>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.6.0/jspdf.plugin.autotable.min.js"></script>
+  <style>
+    :root {
+      --bg:      #020408;
+      --bg2:     #060c14;
+      --panel:   #080f1c;
+      --panel2:  #0d1628;
+      --cyan:    #00e5ff;
+      --cyan2:   #00b4d8;
+      --green:   #00ff88;
+      --red:     #ff2d55;
+      --amber:   #ffb700;
+      --border:  rgba(0,229,255,0.12);
+      --border2: rgba(0,229,255,0.25);
+      --text:    #c8e6f0;
+      --muted:   #4a7a8a;
+      --muted2:  #2a4a5a;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Rajdhani', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+      cursor: crosshair;
+    }
+
+    #bg-canvas {
+      position: fixed; inset: 0;
+      z-index: 0; pointer-events: none;
+    }
+
+    body::after {
+      content: '';
+      position: fixed; inset: 0;
+      background: repeating-linear-gradient(
+        0deg, transparent, transparent 2px,
+        rgba(0,229,255,0.012) 2px, rgba(0,229,255,0.012) 4px
+      );
+      pointer-events: none; z-index: 1;
+      animation: scanlines 10s linear infinite;
+    }
+
+    @keyframes scanlines {
+      from { background-position: 0 0; }
+      to   { background-position: 0 100px; }
+    }
+
+    /* ── HEADER ── */
+    header {
+      position: relative; z-index: 10;
+      padding: 0 2.5rem;
+      border-bottom: 1px solid var(--border);
+      background: rgba(2,4,8,0.88);
+      backdrop-filter: blur(20px);
+    }
+
+    .header-inner {
+      max-width: 1300px; margin: 0 auto;
+      display: flex; align-items: center;
+      justify-content: space-between;
+      height: 76px;
+    }
+
+    .logo { display: flex; align-items: center; gap: 18px; }
+
+    .logo-hex { width: 52px; height: 52px; }
+    .logo-hex svg { width: 52px; height: 52px; }
+    .hex-spin { animation: hex-spin 10s linear infinite; transform-origin: center; }
+    @keyframes hex-spin { to { transform: rotate(360deg); } }
+
+    .logo-wordmark { display: flex; flex-direction: column; }
+
+    .nano-text {
+      font-family: 'Orbitron', monospace;
+      font-size: 1.55rem; font-weight: 900;
+      letter-spacing: 0.06em; line-height: 1;
+      background: linear-gradient(90deg, #fff 0%, var(--cyan) 40%, #fff 70%, var(--cyan2) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      background-size: 200%;
+      animation: gradient-flow 4s ease infinite;
+    }
+
+    @keyframes gradient-flow {
+      0%,100% { background-position: 0%; }
+      50%      { background-position: 100%; }
+    }
+
+    .nano-sub {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 9px; color: var(--cyan);
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      opacity: 0.6; margin-top: 3px;
+    }
+
+    .header-right { display: flex; align-items: center; gap: 16px; }
+
+    .status-pill {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 16px;
+      border: 1px solid var(--border2); border-radius: 2px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px; letter-spacing: 0.1em;
+      background: rgba(0,229,255,0.04);
+      color: var(--cyan); position: relative; overflow: hidden;
+    }
+
+    .status-pill::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(0,229,255,0.07), transparent);
+      transform: translateX(-100%);
+      animation: shimmer 3s infinite;
+    }
+
+    @keyframes shimmer { 100% { transform: translateX(100%); } }
+
+    .status-pill.error { border-color: rgba(255,45,85,0.4); color: var(--red); background: rgba(255,45,85,0.04); }
+
+    .pdot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); position: relative; flex-shrink: 0; }
+    .pdot::after {
+      content: ''; position: absolute; inset: -4px;
+      border-radius: 50%; background: var(--green);
+      opacity: 0.3; animation: ripple 1.8s ease-out infinite;
+    }
+    @keyframes ripple { 0%{transform:scale(0.8);opacity:0.4;} 100%{transform:scale(2.4);opacity:0;} }
+    .error .pdot { background: var(--red); }
+    .error .pdot::after { background: var(--red); }
+
+    .clock-display {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 13px; color: var(--muted); letter-spacing: 0.1em;
+    }
+
+    /* ── CONTAINER ── */
+    .container {
+      position: relative; z-index: 2;
+      max-width: 1300px; margin: 0 auto;
+      padding: 2rem 2.5rem 4rem;
+    }
+
+    /* ── PAGE HEADER ── */
+    .page-header {
+      display: flex; align-items: flex-end;
+      justify-content: space-between;
+      margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem;
+    }
+
+    .page-title h2 {
+      font-family: 'Orbitron', monospace;
+      font-size: 1.1rem; font-weight: 600;
+      color: #fff; letter-spacing: 0.08em;
+    }
+
+    .page-title p {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px; color: var(--muted);
+      letter-spacing: 0.12em; margin-top: 5px;
+    }
+
+    /* ── PDF BUTTON ── */
+    .btn-pdf {
+      display: flex; align-items: center; gap: 10px;
+      padding: 11px 24px;
+      background: transparent;
+      border: 1px solid var(--cyan);
+      color: var(--cyan);
+      font-family: 'Orbitron', monospace;
+      font-size: 11px; font-weight: 600;
+      letter-spacing: 0.15em;
+      cursor: pointer; border-radius: 2px;
+      position: relative; overflow: hidden;
+      transition: color 0.2s, box-shadow 0.2s;
+      text-transform: uppercase;
+    }
+
+    .btn-pdf::before {
+      content: ''; position: absolute; inset: 0;
+      background: var(--cyan);
+      transform: scaleX(0); transform-origin: left;
+      transition: transform 0.25s ease; z-index: 0;
+    }
+
+    .btn-pdf:hover::before { transform: scaleX(1); }
+    .btn-pdf:hover { color: #000; box-shadow: 0 0 28px rgba(0,229,255,0.45); }
+    .btn-pdf span, .btn-pdf svg { position: relative; z-index: 1; }
+    .btn-pdf svg { width: 15px; height: 15px; fill: currentColor; }
+
+    /* ── METRICS ── */
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 14px; margin-bottom: 2rem;
+      animation: fadeUp 0.5s ease both;
+    }
+
+    .metric {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      padding: 1.4rem 1.5rem 1.2rem;
+      position: relative; overflow: hidden;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .metric::before {
+      content: ''; position: absolute;
+      top: 0; left: 0; right: 0; height: 1px;
+      background: var(--al, var(--cyan));
+      box-shadow: 0 0 14px var(--al, var(--cyan));
+    }
+
+    .metric::after {
+      content: ''; position: absolute;
+      bottom: -10px; right: -10px;
+      width: 80px; height: 80px;
+      background: radial-gradient(circle, var(--al, var(--cyan)) 0%, transparent 70%);
+      opacity: 0.04; border-radius: 50%;
+    }
+
+    .metric:hover { border-color: var(--border2); box-shadow: 0 0 20px rgba(0,229,255,0.07); }
+    .metric.ok   { --al: var(--green); }
+    .metric.deny { --al: var(--red); }
+    .metric.conf { --al: var(--amber); }
+
+    .metric-tag {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px; color: var(--muted);
+      letter-spacing: 0.15em; text-transform: uppercase;
+      margin-bottom: 10px;
+      display: flex; align-items: center; gap: 7px;
+    }
+
+    .metric-tag::before { content: ''; width: 14px; height: 1px; background: var(--al, var(--cyan)); }
+
+    .metric-val {
+      font-family: 'Orbitron', monospace;
+      font-size: 2.7rem; font-weight: 900;
+      line-height: 1; color: #fff;
+    }
+
+    .metric.ok   .metric-val { color: var(--green); text-shadow: 0 0 24px rgba(0,255,136,0.35); }
+    .metric.deny .metric-val { color: var(--red);   text-shadow: 0 0 24px rgba(255,45,85,0.35); }
+    .metric.conf .metric-val { color: var(--amber); text-shadow: 0 0 24px rgba(255,183,0,0.35); }
+
+    .metric-foot {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px; color: var(--muted); margin-top: 8px;
+    }
+
+    /* ── TOOLBAR ── */
+    .toolbar {
+      display: flex; align-items: center; gap: 8px;
+      flex-wrap: wrap; margin-bottom: 1rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      padding: 0.75rem 1.2rem;
+      animation: fadeUp 0.5s ease 0.1s both;
+    }
+
+    .tb-label {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px; color: var(--muted);
+      letter-spacing: 0.15em; text-transform: uppercase;
+      margin-right: 4px;
+    }
+
+    .fb {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px; letter-spacing: 0.08em;
+      padding: 5px 14px;
+      border: 1px solid var(--border2);
+      background: transparent; color: var(--muted);
+      cursor: pointer; border-radius: 1px;
+      transition: all 0.15s;
+    }
+
+    .fb:hover { color: var(--cyan); border-color: var(--cyan); }
+    .fb.active { background: rgba(0,229,255,0.1); border-color: var(--cyan); color: var(--cyan); box-shadow: 0 0 10px rgba(0,229,255,0.15) inset; }
+    .fb.ok-f.active   { background: rgba(0,255,136,0.08); border-color: var(--green); color: var(--green); }
+    .fb.deny-f.active { background: rgba(255,45,85,0.08); border-color: var(--red);   color: var(--red); }
+
+    .search-box { margin-left: auto; position: relative; }
+
+    .search-box input {
+      background: var(--panel2);
+      border: 1px solid var(--border2);
+      border-radius: 2px;
+      padding: 6px 12px 6px 32px;
+      font-size: 12px; color: var(--text);
+      width: 220px; outline: none;
+      font-family: 'Share Tech Mono', monospace;
+      letter-spacing: 0.05em;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .search-box input::placeholder { color: var(--muted2); }
+    .search-box input:focus { border-color: var(--cyan); box-shadow: 0 0 0 2px rgba(0,229,255,0.1); }
+
+    .s-icon {
+      position: absolute; left: 10px; top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted); font-size: 14px;
+      pointer-events: none;
+    }
+
+    /* ── TABLE ── */
+    .table-outer {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 2px; overflow: hidden;
+      animation: fadeUp 0.5s ease 0.15s both;
+    }
+
+    .day-group-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 16px;
+      background: var(--panel2);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .day-group-header:not(:first-child) { border-top: 1px solid var(--border); }
+
+    .day-label {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px; color: var(--cyan);
+      letter-spacing: 0.15em;
+    }
+
+    .day-label::before { content: '// '; color: var(--muted2); }
+
+    .day-ok   { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--green); margin-left: 10px; }
+    .day-deny { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--red); }
+    .day-total{ font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--muted); margin-left: auto; }
+
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+
+    thead tr { background: var(--panel2); border-bottom: 1px solid var(--border2); }
+
+    th {
+      padding: 12px 16px; text-align: left;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px; color: var(--cyan);
+      letter-spacing: 0.15em; text-transform: uppercase;
+      font-weight: 400;
+    }
+
+    th:nth-child(1) { width: 100px; }
+    th:nth-child(2) { width: 120px; }
+    th:nth-child(3) { }
+    th:nth-child(4) { width: 95px; }
+    th:nth-child(5) { width: 115px; }
+
+    td {
+      padding: 11px 16px;
+      border-bottom: 1px solid rgba(0,229,255,0.05);
+      font-size: 13px; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap;
+      vertical-align: middle;
+    }
+
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr { transition: background 0.1s; }
+    tbody tr:hover { background: rgba(0,229,255,0.03); }
+
+    .ts-cell { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--muted); }
+
+    .badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 1px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px; letter-spacing: 0.1em;
+    }
+
+    .badge.ok {
+      background: rgba(0,255,136,0.07);
+      border: 1px solid rgba(0,255,136,0.28);
+      color: var(--green);
+    }
+
+    .badge.deny {
+      background: rgba(255,45,85,0.07);
+      border: 1px solid rgba(255,45,85,0.28);
+      color: var(--red);
+    }
+
+    .bd { width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+
+    .nm-cell { font-weight: 600; color: #fff; font-size: 13.5px; }
+    .ci-cell  { font-family: 'Share Tech Mono', monospace; font-size: 11.5px; color: var(--muted); }
+
+    .conf-wrap { display: flex; align-items: center; gap: 8px; }
+    .conf-track { flex: 1; height: 3px; background: var(--panel2); border-radius: 1px; overflow: hidden; }
+    .conf-fill { height: 100%; border-radius: 1px; transition: width 0.5s ease; }
+    .conf-num { font-family: 'Share Tech Mono', monospace; font-size: 11px; font-weight: 500; min-width: 38px; text-align: right; }
+
+    .empty-state { text-align: center; padding: 5rem 2rem; }
+    .empty-icon  { font-family: 'Orbitron', monospace; font-size: 11px; color: var(--muted); letter-spacing: 0.2em; margin-bottom: 12px; }
+    .empty-msg   { font-family: 'Share Tech Mono', monospace; font-size: 13px; color: var(--muted2); letter-spacing: 0.1em; }
+
+    /* ── FOOTER ── */
+    .footer-bar {
+      display: flex; justify-content: space-between;
+      align-items: center; margin-top: 12px;
+      flex-wrap: wrap; gap: 6px;
+    }
+
+    .footer-bar span { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--muted2); letter-spacing: 0.08em; }
+
+    /* ── TOAST ── */
+    .toast {
+      position: fixed; bottom: 2rem; right: 2rem; z-index: 999;
+      background: var(--panel2);
+      border: 1px solid var(--cyan); color: var(--cyan);
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 12px; letter-spacing: 0.08em;
+      padding: 12px 20px; border-radius: 2px;
+      box-shadow: 0 0 24px rgba(0,229,255,0.2);
+      transform: translateY(80px); opacity: 0;
+      transition: all 0.3s ease;
+    }
+    .toast.show { transform: translateY(0); opacity: 1; }
+
+    /* ── ANIMATIONS ── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 680px) {
+      header { padding: 0 1.2rem; }
+      .container { padding: 1.2rem 1rem 3rem; }
+      .nano-text { font-size: 1.1rem; }
+      .clock-display { display: none; }
+      th:nth-child(4), td:nth-child(4),
+      th:nth-child(5), td:nth-child(5) { display: none; }
+      .search-box input { width: 150px; }
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="bg-canvas"></canvas>
+
+<!-- ══ HEADER ══ -->
+<header>
+  <div class="header-inner">
+    <div class="logo">
+      <div class="logo-hex">
+        <svg viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <polygon points="26,2 48,14 48,38 26,50 4,38 4,14" fill="none" stroke="rgba(0,229,255,0.2)" stroke-width="1"/>
+          <polygon class="hex-spin" points="26,6 44,16 44,36 26,46 8,36 8,16" fill="none" stroke="rgba(0,229,255,0.5)" stroke-width="0.6" stroke-dasharray="3 5"/>
+          <polygon points="26,11 41,19.5 41,32.5 26,41 11,32.5 11,19.5" fill="rgba(0,229,255,0.05)" stroke="rgba(0,229,255,0.35)" stroke-width="1"/>
+          <circle cx="26" cy="26" r="6" fill="none" stroke="#00e5ff" stroke-width="1.5"/>
+          <circle cx="26" cy="26" r="2.5" fill="#00e5ff"/>
+          <line x1="26" y1="13" x2="26" y2="19" stroke="#00e5ff" stroke-width="1" opacity="0.6"/>
+          <line x1="26" y1="33" x2="26" y2="39" stroke="#00e5ff" stroke-width="1" opacity="0.6"/>
+          <line x1="14" y1="19.5" x2="20" y2="23" stroke="#00e5ff" stroke-width="1" opacity="0.6"/>
+          <line x1="32" y1="29" x2="38" y2="32.5" stroke="#00e5ff" stroke-width="1" opacity="0.6"/>
+          <line x1="38" y1="19.5" x2="32" y2="23" stroke="#00e5ff" stroke-width="1" opacity="0.6"/>
+          <line x1="14" y1="32.5" x2="20" y2="29" stroke="#00e5ff" stroke-width="1" opacity="0.6"/>
+        </svg>
+      </div>
+      <div class="logo-wordmark">
+        <div class="nano-text">NANOBIOMÉTRICO</div>
+        <div class="nano-sub">CONTROL DE ACCESO · ESP32 + AS608 + FIREBASE</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="status-pill" id="status-pill">
+        <div class="pdot" id="pdot"></div>
+        <span id="live-txt">INICIANDO</span>
+      </div>
+      <div class="clock-display" id="clock">00:00:00</div>
+    </div>
+  </div>
+</header>
+
+<!-- ══ MAIN ══ -->
+<div class="container">
+
+  <div class="page-header">
+    <div class="page-title">
+      <h2>REGISTRO DE ACCESOS</h2>
+      <p>// TIEMPO REAL · ÚLTIMOS 150 REGISTROS · AGRUPADOS POR DÍA</p>
+    </div>
+    <button class="btn-pdf" onclick="exportPDF()">
+      <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+      <span>EXPORTAR PDF</span>
+    </button>
+  </div>
+
+  <!-- Metrics -->
+  <div class="metrics">
+    <div class="metric">
+      <div class="metric-tag">Total registros</div>
+      <div class="metric-val" id="cnt-total">—</div>
+      <div class="metric-foot" id="cnt-days">— días registrados</div>
+    </div>
+    <div class="metric ok">
+      <div class="metric-tag">Permitidos</div>
+      <div class="metric-val" id="cnt-ok">—</div>
+      <div class="metric-foot" id="pct-ok">—% del total</div>
+    </div>
+    <div class="metric deny">
+      <div class="metric-tag">Denegados</div>
+      <div class="metric-val" id="cnt-no">—</div>
+      <div class="metric-foot" id="pct-no">—% del total</div>
+    </div>
+    <div class="metric conf">
+      <div class="metric-tag">Confianza promedio</div>
+      <div class="metric-val" id="cnt-conf">—</div>
+      <div class="metric-foot">Nivel biométrico</div>
+    </div>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <span class="tb-label">FILTRO</span>
+    <button class="fb active" onclick="setFilter('all',  this)">TODOS</button>
+    <button class="fb ok-f"   onclick="setFilter('ok',   this)">PERMITIDOS</button>
+    <button class="fb deny-f" onclick="setFilter('deny', this)">DENEGADOS</button>
+    <div class="search-box">
+      <span class="s-icon">⌕</span>
+      <input type="text" id="search" placeholder="BUSCAR NOMBRE / CI..." oninput="renderTable()"/>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="table-outer">
+    <table>
+      <thead>
+        <tr>
+          <th>Hora</th>
+          <th>Estado</th>
+          <th>Nombre</th>
+          <th>CI</th>
+          <th>Confianza</th>
+        </tr>
+      </thead>
+    </table>
+    <div id="table-body-wrap">
+      <div class="empty-state">
+        <div class="empty-icon">// NANOBIOMÉTRICO //</div>
+        <div class="empty-msg">CONECTANDO CON FIREBASE...</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-bar">
+    <span id="last-update">SIN DATOS AÚN</span>
+    <span>NANOBIOMÉTRICO v2.1 · ESP32+AS608+FIREBASE RTDB</span>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- Firebase SDK v8 -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+<script>
+/* ── CANVAS PARTICLES ── */
+(function() {
+  const c = document.getElementById('bg-canvas');
+  const ctx = c.getContext('2d');
+  let W, H, pts = [];
+
+  function resize() { W = c.width = innerWidth; H = c.height = innerHeight; }
+
+  for (let i = 0; i < 90; i++) {
+    pts.push({
+      x: Math.random(), y: Math.random(),
+      vx: (Math.random()-.5)*.0003,
+      vy: (Math.random()-.5)*.0003,
+      r: Math.random()*1.2+.3,
+      a: Math.random()*.45+.08
+    });
+  }
+
+  function draw() {
+    ctx.clearRect(0,0,W,H);
+    pts.forEach(p => {
+      p.x += p.vx; p.y += p.vy;
+      if(p.x<0)p.x=1; if(p.x>1)p.x=0;
+      if(p.y<0)p.y=1; if(p.y>1)p.y=0;
+      ctx.beginPath();
+      ctx.arc(p.x*W, p.y*H, p.r, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(0,229,255,${p.a})`;
+      ctx.fill();
+    });
+    for(let i=0;i<pts.length;i++) {
+      for(let j=i+1;j<pts.length;j++) {
+        const dx=(pts[i].x-pts[j].x)*W, dy=(pts[i].y-pts[j].y)*H;
+        const d=Math.sqrt(dx*dx+dy*dy);
+        if(d<140) {
+          ctx.beginPath();
+          ctx.moveTo(pts[i].x*W,pts[i].y*H);
+          ctx.lineTo(pts[j].x*W,pts[j].y*H);
+          ctx.strokeStyle=`rgba(0,229,255,${.06*(1-d/140)})`;
+          ctx.lineWidth=.5;
+          ctx.stroke();
+        }
+      }
+    }
+    requestAnimationFrame(draw);
+  }
+
+  resize();
+  addEventListener('resize', resize);
+  draw();
+})();
+
+/* ── CLOCK ── */
+function tick() {
+  document.getElementById('clock').textContent =
+    new Date().toLocaleTimeString('es-BO',{hour12:false});
+}
+tick(); setInterval(tick, 1000);
+
+/* ── FIREBASE ── */
+const firebaseConfig = {
+  apiKey:            "AIzaSyBByw6YOt3qTgaoh6L0OdjOmsCnGLRdvCg",
+  authDomain:        "biometrico-viscarra.firebaseapp.com",
+  databaseURL:       "https://biometrico-viscarra-default-rtdb.firebaseio.com",
+  projectId:         "biometrico-viscarra",
+  storageBucket:     "biometrico-viscarra.firebasestorage.app",
+  messagingSenderId: "898210883765",
+  appId:             "1:898210883765:web:2eba43bbf6ed75511676fc"
+};
+
+firebase.initializeApp(firebaseConfig);
+const ref = firebase.database().ref("accesos");
+
+let allData = [], activeFilter = 'all';
+
+function confColor(v) {
+  if(v>=80) return '#00ff88';
+  if(v>=50) return '#ffb700';
+  return '#ff2d55';
+}
+
+function getDateKey(ts) {
+  if(!ts) return 'SIN FECHA';
+  return ts.split(' ')[0] || 'SIN FECHA';
+}
+
+function groupByDay(rows) {
+  const map = {};
+  rows.forEach(r => {
+    const k = getDateKey(r.timestamp_local);
+    if(!map[k]) map[k] = [];
+    map[k].push(r);
+  });
+  return map;
+}
+
+function setFilter(f, el) {
+  activeFilter = f;
+  document.querySelectorAll('.fb').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  renderTable();
+}
+
+function renderTable() {
+  const wrap   = document.getElementById('table-body-wrap');
+  const search = (document.getElementById('search').value||'').toLowerCase().trim();
+
+  const filtered = allData
+    .filter(r => {
+      if(activeFilter==='ok')   return r.permitido===true;
+      if(activeFilter==='deny') return r.permitido===false;
+      return true;
+    })
+    .filter(r => {
+      if(!search) return true;
+      return (r.nombre||'').toLowerCase().includes(search) ||
+             (r.ci||'').toLowerCase().includes(search);
+    })
+    .slice().reverse();
+
+  if(!filtered.length) {
+    wrap.innerHTML=`<div class="empty-state"><div class="empty-icon">// NANOBIOMÉTRICO //</div><div class="empty-msg">SIN REGISTROS PARA MOSTRAR</div></div>`;
+    return;
+  }
+
+  const groups = groupByDay(filtered);
+  let html = '';
+
+  Object.entries(groups).forEach(([day, rows]) => {
+    const ok   = rows.filter(r=>r.permitido===true).length;
+    const deny = rows.filter(r=>r.permitido===false).length;
+
+    html += `<div class="day-group-header">
+      <span class="day-label">${day}</span>
+      <span class="day-ok">✓ ${ok} OK</span>
+      <span class="day-deny">✗ ${deny} DENY</span>
+      <span class="day-total">${rows.length} REG.</span>
+    </div>
+    <table><tbody>`;
+
+    rows.forEach(r => {
+      const ok    = r.permitido===true;
+      const conf  = r.confianza||0;
+      const color = confColor(conf);
+      const time  = (r.timestamp_local||'').split(' ')[1] || r.timestamp_local||'—';
+
+      html += `<tr>
+        <td class="ts-cell">${time}</td>
+        <td><span class="badge ${ok?'ok':'deny'}"><span class="bd"></span>${ok?'PERMITIDO':'DENEGADO'}</span></td>
+        <td class="nm-cell">${r.nombre||'—'}</td>
+        <td class="ci-cell">${r.ci||'—'}</td>
+        <td>
+          <div class="conf-wrap">
+            <div class="conf-track">
+              <div class="conf-fill" style="width:${Math.min(conf,100)}%;background:${color};box-shadow:0 0 6px ${color}55;"></div>
+            </div>
+            <span class="conf-num" style="color:${color};">${conf>0?conf+'%':'—'}</span>
+          </div>
+        </td>
+      </tr>`;
+    });
+
+    html += `</tbody></table>`;
+  });
+
+  wrap.innerHTML = html;
+}
+
+function updateStats() {
+  const total   = allData.length;
+  const ok      = allData.filter(r=>r.permitido===true).length;
+  const no      = allData.filter(r=>r.permitido===false).length;
+  const confArr = allData.filter(r=>r.confianza>0).map(r=>r.confianza);
+  const avg     = confArr.length ? Math.round(confArr.reduce((a,b)=>a+b,0)/confArr.length) : 0;
+  const days    = new Set(allData.map(r=>getDateKey(r.timestamp_local))).size;
+
+  document.getElementById('cnt-total').textContent = total;
+  document.getElementById('cnt-ok').textContent    = ok;
+  document.getElementById('cnt-no').textContent    = no;
+  document.getElementById('cnt-conf').textContent  = avg ? avg+'%' : '—';
+  document.getElementById('cnt-days').textContent  = days+' día(s) registrado(s)';
+
+  if(total>0) {
+    document.getElementById('pct-ok').textContent = Math.round(ok/total*100)+'% del total';
+    document.getElementById('pct-no').textContent = Math.round(no/total*100)+'% del total';
+  }
+}
+
+function setLive(on, msg) {
+  const pill = document.getElementById('status-pill');
+  pill.className = 'status-pill' + (on ? '' : ' error');
+  document.getElementById('live-txt').textContent = msg;
+}
+
+ref.limitToLast(150).on('value',
+  function(snap) {
+    const data = snap.val();
+    allData = data ? Object.values(data) : [];
+    updateStats(); renderTable();
+    setLive(true, 'EN VIVO');
+    document.getElementById('last-update').textContent =
+      'ÚLTIMA SYNC: ' + new Date().toLocaleTimeString('es-BO',{hour12:false});
+  },
+  function(err) {
+    setLive(false, 'ERROR');
+    document.getElementById('table-body-wrap').innerHTML=`
+      <div class="empty-state">
+        <div class="empty-icon">// ERROR //</div>
+        <div class="empty-msg">${err.message}<br><span style="font-size:10px;color:var(--muted2);">VERIFICA REGLAS DE FIREBASE</span></div>
+      </div>`;
+  }
+);
+
+/* ── TOAST ── */
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+/* ── PDF EXPORT ── */
+function exportPDF() {
+  if(!allData.length) { showToast('⚠ SIN DATOS PARA EXPORTAR'); return; }
+  showToast('⏳ GENERANDO PDF POR DÍAS...');
+
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const pw = doc.internal.pageSize.getWidth();
+    const ph = doc.internal.pageSize.getHeight();
+
+    const groups = groupByDay(allData.slice().reverse());
+    let first = true;
+
+    Object.entries(groups).forEach(([day, rows]) => {
+      if(!first) doc.addPage();
+      first = false;
+
+      /* fondo */
+      doc.setFillColor(2,4,8); doc.rect(0,0,pw,ph,'F');
+
+      /* header band */
+      doc.setFillColor(6,12,20); doc.rect(0,0,pw,22,'F');
+      doc.setDrawColor(0,229,255); doc.setLineWidth(0.3);
+      doc.line(0,22,pw,22);
+
+      /* logo text */
+      doc.setTextColor(255,255,255);
+      doc.setFont('helvetica','bold'); doc.setFontSize(15);
+      doc.text('NANOBIOMÉTRICO', 14, 14);
+
+      doc.setTextColor(0,229,255);
+      doc.setFont('helvetica','normal'); doc.setFontSize(8);
+      doc.text('SISTEMA DE CONTROL DE ACCESO BIOMÉTRICO · ESP32+AS608+FIREBASE RTDB', 68, 14);
+
+      /* generado */
+      doc.setTextColor(74,122,138); doc.setFontSize(7);
+      doc.text('GENERADO: '+new Date().toLocaleString('es-BO'), pw-60, 14);
+
+      /* day band */
+      doc.setFillColor(13,22,40); doc.rect(0,24,pw,12,'F');
+      doc.setDrawColor(0,229,255,0.4); doc.line(14,36,pw-14,36);
+
+      doc.setTextColor(0,229,255); doc.setFont('helvetica','bold'); doc.setFontSize(11);
+      doc.text('// '+day, 14, 32);
+
+      const ok_d   = rows.filter(r=>r.permitido===true).length;
+      const deny_d = rows.filter(r=>r.permitido===false).length;
+
+      doc.setFont('helvetica','normal'); doc.setFontSize(8);
+      doc.setTextColor(0,255,136);  doc.text('PERMITIDOS: '+ok_d,   pw-100, 32);
+      doc.setTextColor(255,45,85);  doc.text('DENEGADOS: '+deny_d,  pw-60,  32);
+      doc.setTextColor(74,122,138); doc.text('TOTAL: '+rows.length+' REG.', pw-22, 32);
+
+      /* table */
+      const tableRows = rows.map(r => {
+        const time = (r.timestamp_local||'').split(' ')[1] || r.timestamp_local||'—';
+        return [
+          time,
+          r.permitido ? 'PERMITIDO' : 'DENEGADO',
+          r.nombre   ||'—',
+          r.ci       ||'—',
+          r.correo   ||'—',
+          r.telefono ||'—',
+          r.confianza>0 ? r.confianza+'%' : '—',
+        ];
+      });
+
+      doc.autoTable({
+        startY: 40,
+        head: [['HORA','ESTADO','NOMBRE','CI','CORREO','TELÉFONO','CONFIANZA']],
+        body: tableRows,
+        theme: 'plain',
+        styles: {
+          font: 'helvetica', fontSize: 8,
+          textColor: [200,230,240],
+          cellPadding: {top:3,right:5,bottom:3,left:5},
+          lineColor: [13,22,40], lineWidth: 0.3,
+          fillColor: [6,12,20],
+        },
+        headStyles: {
+          fillColor: [13,22,40],
+          textColor: [0,229,255],
+          fontSize: 7.5, fontStyle: 'bold',
+          lineColor: [0,229,255],
+          lineWidth: {bottom:0.4},
+        },
+        alternateRowStyles: { fillColor: [8,15,28] },
+        columnStyles: {
+          0:{cellWidth:20},
+          1:{cellWidth:28,fontStyle:'bold'},
+          2:{cellWidth:45},
+          3:{cellWidth:22},
+          4:{cellWidth:55},
+          5:{cellWidth:22},
+          6:{cellWidth:22,halign:'center'},
+        },
+        didParseCell: function(d) {
+          if(d.section==='body' && d.column.index===1) {
+            d.cell.styles.textColor = d.cell.raw==='PERMITIDO' ? [0,255,136] : [255,45,85];
+          }
+        },
+        margin: {left:14,right:14},
+      });
+
+      /* footer */
+      doc.setTextColor(42,74,90); doc.setFontSize(7);
+      doc.text('NANOBIOMÉTRICO · ESP32+AS608 · EXPORTADO: '+new Date().toLocaleString('es-BO'), 14, ph-8);
+      doc.text('PÁG '+Object.keys(groups).indexOf(day)+1+' / '+Object.keys(groups).length, pw-20, ph-8);
+    });
+
+    const fname = 'NANOBIOMETRICO_'+new Date().toISOString().slice(0,10)+'.pdf';
+    doc.save(fname);
+    showToast('✓ PDF EXPORTADO: '+fname);
+  } catch(e) {
+    showToast('✗ ERROR AL GENERAR PDF');
+    console.error(e);
+  }
+}
+</script>
+</body>
+</html>
