@@ -917,6 +917,31 @@ function exportPDF() {
     console.error(e);
   }
 }
+// AUTO EXPORTAR PDF DESDE URL
+window.onload = function () {
+
+  const params = new URLSearchParams(window.location.search);
+
+  // Detecta ?pdf=1
+  if (params.get("pdf") === "1") {
+
+    // Esperar hasta que Firebase cargue datos
+    const espera = setInterval(() => {
+
+      if (allData.length > 0) {
+
+        clearInterval(espera);
+
+        // Generar PDF automáticamente
+        exportPDF();
+
+      }
+
+    }, 1000);
+
+  }
+
+};
 </script>
 </body>
 </html>
